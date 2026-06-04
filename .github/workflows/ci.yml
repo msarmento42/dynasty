@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install flake8
-      - run: flake8 . --max-line-length=120 --ignore=E501,W503 --exclude=.venv
+      - run: flake8 backend/ --max-line-length=120
 
   scope-check:
     name: Validate scope

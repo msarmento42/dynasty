@@ -1,0 +1,25 @@
+{
+  "allowed_paths": [
+    "backend/**",
+    "frontend/**",
+    "requirements.txt",
+    ".gitignore",
+    "README.md"
+  ],
+  "blocked_paths": [
+    ".github/**",
+    ".agios/**",
+    "*.env*",
+    "*.db",
+    "logs/**",
+    "data/**"
+  ],
+  "infra_exception": {
+    "title_prefix": "agios infra:",
+    "allowed_paths": [
+      ".github/**",
+      ".agios/**",
+      "AGENTS.md"
+    ]
+  }
+}
