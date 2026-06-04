@@ -1,24 +1,11 @@
-name: Auto-Merge on CI Pass
+name: Auto-Merge Disabled
 
 on:
-  pull_request:
-    types: [opened, reopened, synchronize]
-
-permissions:
-  contents: write
-  pull-requests: write
+  workflow_dispatch:
 
 jobs:
-  enable-auto-merge:
-    name: Enable auto-merge
+  disabled:
+    name: Auto-merge disabled for private repo
     runs-on: ubuntu-latest
     steps:
-      - name: Enable auto-merge (squash)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh pr merge "${{ github.event.pull_request.number }}" \
-            --repo "${{ github.repository }}" \
-            --auto \
-            --squash \
-            --subject "${{ github.event.pull_request.title }}"
+      - run: echo "Auto-merge is disabled for dynasty until CI and scope checks are explicitly trusted."
