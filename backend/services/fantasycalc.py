@@ -1,0 +1,1 @@
+"""FantasyCalc API service stubs."""
