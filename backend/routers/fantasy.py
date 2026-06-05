@@ -1,7 +1,8 @@
-"""Fantasy API endpoints — leagues, rosters, trade evaluation, picks."""
+"""Fantasy API endpoints - leagues, rosters, trade evaluation, picks."""
 
+import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import aiosqlite
@@ -9,13 +10,12 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from backend.database import DB_PATH
+from backend.scripts import daily_sync
 from backend.services.fantasy_engine import LEAGUE_CONFIG, enrich_player, pick_value
 from backend.services.proposals import generate_proposals
 
 router = APIRouter()
 
-
-# ── Pydantic models ────────────────────────────────────────────────────────────
 
 class PickRequest(BaseModel):
     round: int
@@ -32,8 +32,6 @@ class TradeRequest(BaseModel):
     side_a: TradeSide
     side_b: TradeSide
 
-
-# ── Helpers ────────────────────────────────────────────────────────────────────
 
 async def get_league_row(db: aiosqlite.Connection, league_id: str) -> dict:
     async with db.execute(
@@ -74,8 +72,6 @@ async def get_players_for_ids(
     return players
 
 
-# ── Routes ─────────────────────────────────────────────────────────────────────
-
 @router.get("/status")
 async def status():
     return {"status": "dynasty engine online"}
@@ -91,7 +87,6 @@ async def get_leagues():
             rows = await cur.fetchall()
 
     if not rows:
-        # Fall back to hardcoded config if DB not yet synced
         return [
             {
                 "league_id": lid,
@@ -179,7 +174,7 @@ async def get_all_rosters(league_id: str):
 
 @router.post("/trade/evaluate")
 async def evaluate_trade(req: TradeRequest):
-    """Evaluate a proposed trade — returns values, delta, and verdict."""
+    """Evaluate a proposed trade - returns values, delta, and verdict."""
     league_id = req.league_id
     cfg = LEAGUE_CONFIG.get(league_id, {})
     n_teams = cfg.get("n_teams", 12)
@@ -189,7 +184,6 @@ async def evaluate_trade(req: TradeRequest):
         side_a_players = await get_players_for_ids(db, req.side_a.player_ids, league_id)
         side_b_players = await get_players_for_ids(db, req.side_b.player_ids, league_id)
 
-    # Pick values
     side_a_picks = []
     for pk in req.side_a.picks:
         val = pick_value(pk.round, pk.year - current_year, n_teams)
@@ -209,7 +203,7 @@ async def evaluate_trade(req: TradeRequest):
         + sum(p["value"] for p in side_b_picks)
     )
 
-    delta = side_b_value - side_a_value  # positive = you gain
+    delta = side_b_value - side_a_value
     delta_pct = round((delta / side_a_value * 100) if side_a_value else 0, 1)
 
     if delta_pct > 10:
@@ -240,11 +234,84 @@ async def get_proposals(league_id: str):
     return await generate_proposals(league_id)
 
 
+@router.get("/alerts/{league_id}")
+async def get_alerts(league_id: str):
+    """Return recent alerts for players on my roster in this league."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        league = await get_league_row(db, league_id)
+        my_roster_id = league["config"].get("my_roster_id", league["my_roster_id"])
+
+        async with db.execute(
+            "SELECT player_ids_json FROM rosters WHERE league_id=? AND roster_id=?",
+            (league_id, my_roster_id),
+        ) as cur:
+            row = await cur.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Roster not found. Run daily sync first.")
+
+        player_ids = json.loads(row[0] or "[]")
+        if not player_ids:
+            return []
+
+        placeholders = ",".join("?" * len(player_ids))
+        query = f"""
+            SELECT
+                a.alert_type,
+                a.severity,
+                a.player_name,
+                p.position,
+                p.team,
+                a.old_value,
+                a.new_value,
+                a.detail,
+                a.created_at
+            FROM alerts a
+            LEFT JOIN players p ON p.sleeper_id = a.sleeper_id
+            WHERE a.league_id=?
+              AND a.created_at >= ?
+              AND a.sleeper_id IN ({placeholders})
+            ORDER BY
+                CASE a.severity
+                    WHEN 'critical' THEN 0
+                    WHEN 'notable' THEN 1
+                    ELSE 2
+                END,
+                a.created_at DESC
+        """
+        async with db.execute(query, [league_id, cutoff, *player_ids]) as cur:
+            rows = await cur.fetchall()
+
+    return [
+        {
+            "alert_type": row[0],
+            "severity": row[1],
+            "player_name": row[2],
+            "position": row[3],
+            "team": row[4],
+            "old_value": row[5],
+            "new_value": row[6],
+            "detail": row[7],
+            "created_at": row[8],
+        }
+        for row in rows
+    ]
+
+
+@router.get("/sync")
+async def trigger_sync():
+    """Trigger a manual sync in the background."""
+    asyncio.create_task(daily_sync.main())
+    return {"status": "sync started"}
+
+
 @router.get("/league/{league_id}/picks")
 async def get_picks(league_id: str, my_roster_id: Optional[int] = None):
     """Return traded picks for this league."""
     async with aiosqlite.connect(DB_PATH) as db:
-        await get_league_row(db, league_id)  # validates league exists
+        await get_league_row(db, league_id)
         async with db.execute(
             "SELECT season, round, original_owner_id, current_owner_id "
             "FROM picks WHERE league_id=? ORDER BY season, round",
