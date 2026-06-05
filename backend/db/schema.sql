@@ -51,6 +51,29 @@ CREATE TABLE IF NOT EXISTS news_items (
     created_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    league_id TEXT,
+    sleeper_id TEXT,
+    player_name TEXT,
+    alert_type TEXT,
+    severity TEXT,
+    old_value TEXT,
+    new_value TEXT,
+    detail TEXT,
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS player_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sleeper_id TEXT,
+    injury_status TEXT,
+    depth_chart_order INTEGER,
+    value_sf INTEGER,
+    snapshot_date TEXT,
+    UNIQUE(sleeper_id, snapshot_date)
+);
+
 CREATE TABLE IF NOT EXISTS sync_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     sync_type TEXT,
