@@ -74,6 +74,33 @@ CREATE TABLE IF NOT EXISTS player_snapshots (
     UNIQUE(sleeper_id, snapshot_date)
 );
 
+CREATE TABLE IF NOT EXISTS trade_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    league_id TEXT,
+    transaction_id TEXT UNIQUE,
+    week INTEGER,
+    season INTEGER,
+    side_a_player_ids_json TEXT,
+    side_b_player_ids_json TEXT,
+    side_a_pick_ids_json TEXT,
+    side_b_pick_ids_json TEXT,
+    side_a_total_value INTEGER,
+    side_b_total_value INTEGER,
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS market_calibration (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    league_id TEXT,
+    sleeper_id TEXT,
+    player_name TEXT,
+    fc_value INTEGER,
+    observed_trades INTEGER,
+    avg_trade_ratio REAL,
+    updated_at TEXT,
+    UNIQUE(league_id, sleeper_id)
+);
+
 CREATE TABLE IF NOT EXISTS sync_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     sync_type TEXT,

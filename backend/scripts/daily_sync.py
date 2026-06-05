@@ -7,7 +7,7 @@ from typing import Optional
 
 import aiosqlite
 
-from backend.services import fantasycalc, sleeper
+from backend.services import fantasycalc, sleeper, trade_history
 from backend.services.fantasy_engine import LEAGUE_CONFIG
 
 
@@ -313,9 +313,14 @@ async def main() -> None:
         await upsert_1qb_values(db, onqb_players)
         print(f"  Synced {n} players")
 
+        total_new_trades = 0
         for league_id, config in LEAGUE_CONFIG.items():
             print(f"  Syncing league: {config['name']}...")
             await sync_league(db, league_id, config)
+            new_trades = await trade_history.ingest_trade_history(league_id)
+            await trade_history.compute_calibration(league_id)
+            total_new_trades += new_trades
+            print(f"  Ingested {new_trades} new trades for {config['name']}")
 
         alert_count = await detect_changes(db)
         print(f"  Created {alert_count} alerts")
@@ -328,7 +333,10 @@ async def main() -> None:
             (
                 "daily_sync",
                 "success",
-                f"{n} players synced, {len(LEAGUE_CONFIG)} leagues, {alert_count} alerts",
+                (
+                    f"{n} players synced, {len(LEAGUE_CONFIG)} leagues, "
+                    f"{total_new_trades} new trades, {alert_count} alerts"
+                ),
                 now,
             ),
         )
