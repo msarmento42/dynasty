@@ -319,6 +319,7 @@ async def main() -> None:
             await sync_league(db, league_id, config)
             new_trades = await trade_history.ingest_trade_history(league_id)
             await trade_history.compute_calibration(league_id)
+            await trade_history.build_manager_profiles(league_id)
             total_new_trades += new_trades
             print(f"  Ingested {new_trades} new trades for {config['name']}")
 
