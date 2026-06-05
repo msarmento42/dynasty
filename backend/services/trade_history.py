@@ -1,4 +1,4 @@
-"""Sleeper trade history ingestion and market calibration."""
+"""Sleeper trade history ingestion, calibration, and manager profiling."""
 
 import json
 from datetime import datetime, timezone
@@ -9,23 +9,36 @@ import aiosqlite
 from backend.database import DB_PATH
 from backend.services import sleeper
 
+POSITIONS = ("QB", "RB", "WR", "TE")
 
-async def player_value(db: aiosqlite.Connection, sleeper_id: str) -> int:
+
+async def player_row(db: aiosqlite.Connection, sleeper_id: str) -> dict:
     async with db.execute(
-        "SELECT value_sf FROM players WHERE sleeper_id=?",
+        "SELECT name, position, value_sf FROM players WHERE sleeper_id=?",
         (str(sleeper_id),),
     ) as cur:
         row = await cur.fetchone()
-    return int(row[0] or 0) if row else 0
+    if not row:
+        return {"name": str(sleeper_id), "position": None, "value_sf": 0}
+    return {"name": row[0], "position": row[1], "value_sf": int(row[2] or 0)}
+
+
+async def player_value(db: aiosqlite.Connection, sleeper_id: str) -> int:
+    return (await player_row(db, sleeper_id))["value_sf"]
 
 
 async def player_name(db: aiosqlite.Connection, sleeper_id: str) -> str:
-    async with db.execute(
-        "SELECT name FROM players WHERE sleeper_id=?",
-        (str(sleeper_id),),
-    ) as cur:
-        row = await cur.fetchone()
-    return row[0] if row else str(sleeper_id)
+    return (await player_row(db, sleeper_id))["name"]
+
+
+async def ensure_trade_history_columns(db: aiosqlite.Connection) -> None:
+    async with db.execute("PRAGMA table_info(trade_history)") as cur:
+        columns = {row[1] for row in await cur.fetchall()}
+    if "side_a_roster_id" not in columns:
+        await db.execute("ALTER TABLE trade_history ADD COLUMN side_a_roster_id INTEGER")
+    if "side_b_roster_id" not in columns:
+        await db.execute("ALTER TABLE trade_history ADD COLUMN side_b_roster_id INTEGER")
+    await db.commit()
 
 
 def group_trade_sides(transaction: dict) -> list[dict]:
@@ -65,6 +78,7 @@ async def ingest_trade_history(league_id: str, season: int = 2024) -> int:
     now = datetime.now(timezone.utc).isoformat()
 
     async with aiosqlite.connect(DB_PATH) as db:
+        await ensure_trade_history_columns(db)
         for week in range(1, 19):
             transactions = await sleeper.fetch_transactions(league_id, week)
             for transaction in transactions:
@@ -84,16 +98,19 @@ async def ingest_trade_history(league_id: str, season: int = 2024) -> int:
                     """
                     INSERT OR IGNORE INTO trade_history
                         (league_id, transaction_id, week, season,
+                         side_a_roster_id, side_b_roster_id,
                          side_a_player_ids_json, side_b_player_ids_json,
                          side_a_pick_ids_json, side_b_pick_ids_json,
                          side_a_total_value, side_b_total_value, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         league_id,
                         str(transaction.get("transaction_id")),
                         week,
                         season,
+                        side_a["roster_id"],
+                        side_b["roster_id"],
                         json.dumps(side_a["players"]),
                         json.dumps(side_b["players"]),
                         json.dumps(side_a["picks"]),
@@ -156,13 +173,149 @@ async def compute_calibration(league_id: str) -> None:
                     avg_trade_ratio=excluded.avg_trade_ratio,
                     updated_at=excluded.updated_at
                 """,
+                (league_id, sleeper_id, name, fc_value, len(ratios), round(mean(ratios), 3), now),
+            )
+
+        await db.commit()
+
+
+def average(values: list[float], default: float = 1.0) -> float:
+    return round(mean(values), 3) if values else default
+
+
+async def values_by_position(db: aiosqlite.Connection, player_ids: list[str]) -> dict:
+    totals = {position: 0 for position in POSITIONS}
+    for player_id in player_ids:
+        player = await player_row(db, player_id)
+        position = player.get("position")
+        if position in totals:
+            totals[position] += player.get("value_sf", 0)
+    return totals
+
+
+def target_signal(profile: dict) -> str:
+    if profile["qb_premium"] > 1.1:
+        return "SELL_QBS_TO_THEM"
+    if profile["pick_sell_bias"] > 1.1:
+        return "BUY_PICKS_FROM_THEM"
+    if profile["rb_premium"] > 1.1:
+        return "SELL_RBS_TO_THEM"
+    return "NEUTRAL"
+
+
+def profile_summary(profile: dict) -> str:
+    premiums = [
+        ("QBs", profile["qb_premium"]),
+        ("RBs", profile["rb_premium"]),
+        ("WRs", profile["wr_premium"]),
+        ("TEs", profile["te_premium"]),
+    ]
+    strongest = max(premiums, key=lambda item: item[1])
+    pick_note = "sells picks below value" if profile["pick_sell_bias"] > 1.1 else "does not show a pick-selling bias"
+    activity = "Active trader" if profile["accept_rate"] >= 0.4 else "Selective trader"
+    return f"Tends to overpay for {strongest[0]} ({strongest[1]:.2f}x) and {pick_note}. {activity}."
+
+
+async def build_manager_profiles(league_id: str) -> None:
+    """Analyze stored trades and upsert per-manager tendency profiles."""
+    now = datetime.now(timezone.utc).isoformat()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await ensure_trade_history_columns(db)
+        async with db.execute(
+            "SELECT roster_id, owner_display_name FROM rosters WHERE league_id=?",
+            (league_id,),
+        ) as cur:
+            managers = await cur.fetchall()
+
+        async with db.execute(
+            """
+            SELECT side_a_roster_id, side_b_roster_id, side_a_player_ids_json, side_b_player_ids_json,
+                   side_a_pick_ids_json, side_b_pick_ids_json, side_a_total_value, side_b_total_value
+            FROM trade_history
+            WHERE league_id=?
+            """,
+            (league_id,),
+        ) as cur:
+            trades = await cur.fetchall()
+
+        for roster_id, owner_name in managers:
+            trade_count = 0
+            position_ratios = {position: [] for position in POSITIONS}
+            pick_biases = []
+
+            for trade in trades:
+                side_a_roster, side_b_roster = trade[0], trade[1]
+                if roster_id not in (side_a_roster, side_b_roster):
+                    continue
+
+                trade_count += 1
+                side_a_players = json.loads(trade[2] or "[]")
+                side_b_players = json.loads(trade[3] or "[]")
+                side_a_picks = json.loads(trade[4] or "[]")
+                side_b_picks = json.loads(trade[5] or "[]")
+                side_a_value = trade[6] or 0
+                side_b_value = trade[7] or 0
+
+                received_players = side_a_players if roster_id == side_a_roster else side_b_players
+                sent_value = side_b_value if roster_id == side_a_roster else side_a_value
+                sent_picks = side_b_picks if roster_id == side_a_roster else side_a_picks
+                received_picks = side_a_picks if roster_id == side_a_roster else side_b_picks
+                received_by_pos = await values_by_position(db, received_players)
+
+                if sent_value > 0:
+                    for position, value in received_by_pos.items():
+                        if value > 0:
+                            position_ratios[position].append(value / sent_value)
+
+                if sent_picks or received_picks:
+                    pick_biases.append(1.2 if sent_picks else 0.8)
+
+            if trade_count < 3:
+                continue
+
+            profile = {
+                "qb_premium": average(position_ratios["QB"]),
+                "rb_premium": average(position_ratios["RB"]),
+                "wr_premium": average(position_ratios["WR"]),
+                "te_premium": average(position_ratios["TE"]),
+                "pick_sell_bias": average(pick_biases),
+                "accept_rate": round(min(1.0, trade_count / 20), 3),
+            }
+            profile["summary"] = profile_summary(profile)
+            profile["target_signal"] = target_signal(profile)
+
+            await db.execute(
+                """
+                INSERT INTO manager_profiles
+                    (league_id, roster_id, owner_name, trades_analyzed, qb_premium,
+                     rb_premium, wr_premium, te_premium, pick_sell_bias,
+                     accept_rate, profile_json, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(league_id, roster_id) DO UPDATE SET
+                    owner_name=excluded.owner_name,
+                    trades_analyzed=excluded.trades_analyzed,
+                    qb_premium=excluded.qb_premium,
+                    rb_premium=excluded.rb_premium,
+                    wr_premium=excluded.wr_premium,
+                    te_premium=excluded.te_premium,
+                    pick_sell_bias=excluded.pick_sell_bias,
+                    accept_rate=excluded.accept_rate,
+                    profile_json=excluded.profile_json,
+                    updated_at=excluded.updated_at
+                """,
                 (
                     league_id,
-                    sleeper_id,
-                    name,
-                    fc_value,
-                    len(ratios),
-                    round(mean(ratios), 3),
+                    roster_id,
+                    owner_name,
+                    trade_count,
+                    profile["qb_premium"],
+                    profile["rb_premium"],
+                    profile["wr_premium"],
+                    profile["te_premium"],
+                    profile["pick_sell_bias"],
+                    profile["accept_rate"],
+                    json.dumps(profile),
                     now,
                 ),
             )
