@@ -1,11 +1,45 @@
-name: Auto-Merge Disabled
+name: Auto-Merge on CI Pass
 
+# Triggers AFTER the CI workflow completes — this way we only merge
+# when lint + scope-check have actually passed. Works on private repos
+# without branch protection (no GitHub Pro required).
 on:
-  workflow_dispatch:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
 
 jobs:
-  disabled:
-    name: Auto-merge disabled for private repo
+  auto-merge:
+    name: Merge PR if CI passed
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Auto-merge is disabled for dynasty until CI and scope checks are explicitly trusted."
+      - name: Find open PR for this commit
+        id: find-pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHA="${{ github.event.workflow_run.head_sha }}"
+          PR_NUMBER=$(gh api "repos/${{ github.repository }}/pulls?state=open&per_page=50" \
+            --jq ".[] | select(.head.sha == \"$SHA\") | .number" | head -1)
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "Found PR: $PR_NUMBER for SHA $SHA"
+
+      - name: Squash merge
+        if: steps.find-pr.outputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr merge "${{ steps.find-pr.outputs.pr_number }}" \
+            --repo "${{ github.repository }}" \
+            --squash \
+            --delete-branch
+          echo "Merged PR #${{ steps.find-pr.outputs.pr_number }}"
+
+      - name: No PR found
+        if: steps.find-pr.outputs.pr_number == ''
+        run: echo "No open PR found for SHA ${{ github.event.workflow_run.head_sha }} — skipping"
