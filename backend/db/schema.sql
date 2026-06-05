@@ -80,6 +80,8 @@ CREATE TABLE IF NOT EXISTS trade_history (
     transaction_id TEXT UNIQUE,
     week INTEGER,
     season INTEGER,
+    side_a_roster_id INTEGER,
+    side_b_roster_id INTEGER,
     side_a_player_ids_json TEXT,
     side_b_player_ids_json TEXT,
     side_a_pick_ids_json TEXT,
@@ -99,6 +101,23 @@ CREATE TABLE IF NOT EXISTS market_calibration (
     avg_trade_ratio REAL,
     updated_at TEXT,
     UNIQUE(league_id, sleeper_id)
+);
+
+CREATE TABLE IF NOT EXISTS manager_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    league_id TEXT,
+    roster_id INTEGER,
+    owner_name TEXT,
+    trades_analyzed INTEGER,
+    qb_premium REAL,
+    rb_premium REAL,
+    wr_premium REAL,
+    te_premium REAL,
+    pick_sell_bias REAL,
+    accept_rate REAL,
+    profile_json TEXT,
+    updated_at TEXT,
+    UNIQUE(league_id, roster_id)
 );
 
 CREATE TABLE IF NOT EXISTS sync_log (
