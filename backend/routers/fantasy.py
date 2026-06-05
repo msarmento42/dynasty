@@ -300,6 +300,107 @@ async def get_alerts(league_id: str):
     ]
 
 
+@router.get("/calibration/{league_id}")
+async def get_calibration(league_id: str):
+    """Return market calibration data for a league."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await get_league_row(db, league_id)
+        async with db.execute(
+            "SELECT COUNT(*) FROM trade_history WHERE league_id=?",
+            (league_id,),
+        ) as cur:
+            total_row = await cur.fetchone()
+
+        async with db.execute(
+            """
+            SELECT sleeper_id, player_name, fc_value, avg_trade_ratio, observed_trades
+            FROM market_calibration
+            WHERE league_id=? AND observed_trades >= 2
+            ORDER BY ABS(avg_trade_ratio - 1) DESC
+            """,
+            (league_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+    players = []
+    for row in rows:
+        ratio = row[3] or 0
+        if ratio > 1.1:
+            signal = "OVERPAID"
+        elif ratio < 0.9:
+            signal = "UNDERVALUED"
+        else:
+            signal = "FAIR"
+        players.append({
+            "sleeper_id": row[0],
+            "player_name": row[1],
+            "fc_value": row[2],
+            "avg_trade_ratio": ratio,
+            "signal": signal,
+            "observed_trades": row[4],
+        })
+
+    return {
+        "league_id": league_id,
+        "total_trades_analyzed": total_row[0] if total_row else 0,
+        "players": players,
+    }
+
+
+@router.get("/trade-history/{league_id}")
+async def get_trade_history(league_id: str):
+    """Return recent stored trade history with player names resolved."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await get_league_row(db, league_id)
+        async with db.execute(
+            """
+            SELECT transaction_id, week, season, side_a_player_ids_json, side_b_player_ids_json,
+                   side_a_pick_ids_json, side_b_pick_ids_json, side_a_total_value,
+                   side_b_total_value, created_at
+            FROM trade_history
+            WHERE league_id=?
+            ORDER BY created_at DESC
+            LIMIT 20
+            """,
+            (league_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+        player_ids = set()
+        parsed_rows = []
+        for row in rows:
+            side_a_ids = json.loads(row[3] or "[]")
+            side_b_ids = json.loads(row[4] or "[]")
+            player_ids.update(side_a_ids)
+            player_ids.update(side_b_ids)
+            parsed_rows.append((row, side_a_ids, side_b_ids))
+
+        names = {}
+        if player_ids:
+            placeholders = ",".join("?" * len(player_ids))
+            async with db.execute(
+                f"SELECT sleeper_id, name FROM players WHERE sleeper_id IN ({placeholders})",
+                list(player_ids),
+            ) as cur:
+                names = {player_id: name for player_id, name in await cur.fetchall()}
+
+    return [
+        {
+            "transaction_id": row[0],
+            "week": row[1],
+            "season": row[2],
+            "side_a_players": [{"sleeper_id": pid, "name": names.get(pid, pid)} for pid in side_a_ids],
+            "side_b_players": [{"sleeper_id": pid, "name": names.get(pid, pid)} for pid in side_b_ids],
+            "side_a_picks": json.loads(row[5] or "[]"),
+            "side_b_picks": json.loads(row[6] or "[]"),
+            "side_a_total_value": row[7],
+            "side_b_total_value": row[8],
+            "created_at": row[9],
+        }
+        for row, side_a_ids, side_b_ids in parsed_rows
+    ]
+
+
 @router.get("/sync")
 async def trigger_sync():
     """Trigger a manual sync in the background."""
