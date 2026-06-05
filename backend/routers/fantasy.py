@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from backend.database import DB_PATH
 from backend.services.fantasy_engine import LEAGUE_CONFIG, enrich_player, pick_value
+from backend.services.proposals import generate_proposals
 
 router = APIRouter()
 
@@ -229,6 +230,14 @@ async def evaluate_trade(req: TradeRequest):
         "side_a_picks": side_a_picks,
         "side_b_picks": side_b_picks,
     }
+
+
+@router.get("/proposals/{league_id}")
+async def get_proposals(league_id: str):
+    """Auto-generated ranked trade proposals for this league."""
+    if league_id not in LEAGUE_CONFIG:
+        raise HTTPException(status_code=404, detail=f"League {league_id} not found.")
+    return await generate_proposals(league_id)
 
 
 @router.get("/league/{league_id}/picks")
