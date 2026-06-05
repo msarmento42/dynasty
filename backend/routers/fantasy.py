@@ -72,6 +72,26 @@ async def get_players_for_ids(
     return players
 
 
+def manager_payload(row: tuple, my_roster_id: int) -> dict:
+    profile = json.loads(row[10] or "{}")
+    return {
+        "roster_id": row[0],
+        "owner_name": row[1],
+        "is_mine": row[0] == my_roster_id,
+        "trades_analyzed": row[2],
+        "tendencies": {
+            "qb_premium": row[3],
+            "rb_premium": row[4],
+            "wr_premium": row[5],
+            "te_premium": row[6],
+            "pick_sell_bias": row[7],
+        },
+        "accept_rate": row[8],
+        "summary": profile.get("summary", "Not enough tendency detail yet."),
+        "target_signal": profile.get("target_signal", "NEUTRAL"),
+    }
+
+
 @router.get("/status")
 async def status():
     return {"status": "dynasty engine online"}
@@ -305,10 +325,7 @@ async def get_calibration(league_id: str):
     """Return market calibration data for a league."""
     async with aiosqlite.connect(DB_PATH) as db:
         await get_league_row(db, league_id)
-        async with db.execute(
-            "SELECT COUNT(*) FROM trade_history WHERE league_id=?",
-            (league_id,),
-        ) as cur:
+        async with db.execute("SELECT COUNT(*) FROM trade_history WHERE league_id=?", (league_id,)) as cur:
             total_row = await cur.fetchone()
 
         async with db.execute(
@@ -340,11 +357,7 @@ async def get_calibration(league_id: str):
             "observed_trades": row[4],
         })
 
-    return {
-        "league_id": league_id,
-        "total_trades_analyzed": total_row[0] if total_row else 0,
-        "players": players,
-    }
+    return {"league_id": league_id, "total_trades_analyzed": total_row[0] if total_row else 0, "players": players}
 
 
 @router.get("/trade-history/{league_id}")
@@ -399,6 +412,77 @@ async def get_trade_history(league_id: str):
         }
         for row, side_a_ids, side_b_ids in parsed_rows
     ]
+
+
+@router.get("/managers/{league_id}")
+async def get_managers(league_id: str):
+    """Return manager tendency profiles for a league."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        league = await get_league_row(db, league_id)
+        my_roster_id = league["config"].get("my_roster_id", league["my_roster_id"])
+        async with db.execute(
+            """
+            SELECT roster_id, owner_name, trades_analyzed, qb_premium, rb_premium, wr_premium,
+                   te_premium, pick_sell_bias, accept_rate, updated_at, profile_json
+            FROM manager_profiles
+            WHERE league_id=?
+            ORDER BY trades_analyzed DESC, owner_name
+            """,
+            (league_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+    return [manager_payload(row, my_roster_id) for row in rows]
+
+
+@router.get("/managers/{league_id}/{roster_id}")
+async def get_manager_detail(league_id: str, roster_id: int):
+    """Return one manager profile and their related trade history rows."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        league = await get_league_row(db, league_id)
+        my_roster_id = league["config"].get("my_roster_id", league["my_roster_id"])
+        async with db.execute(
+            """
+            SELECT roster_id, owner_name, trades_analyzed, qb_premium, rb_premium, wr_premium,
+                   te_premium, pick_sell_bias, accept_rate, updated_at, profile_json
+            FROM manager_profiles
+            WHERE league_id=? AND roster_id=?
+            """,
+            (league_id, roster_id),
+        ) as cur:
+            profile_row = await cur.fetchone()
+
+        if not profile_row:
+            raise HTTPException(status_code=404, detail="Manager profile not found. Run daily sync first.")
+
+        async with db.execute(
+            """
+            SELECT transaction_id, week, season, side_a_roster_id, side_b_roster_id,
+                   side_a_total_value, side_b_total_value, created_at
+            FROM trade_history
+            WHERE league_id=? AND (side_a_roster_id=? OR side_b_roster_id=?)
+            ORDER BY created_at DESC
+            LIMIT 20
+            """,
+            (league_id, roster_id, roster_id),
+        ) as cur:
+            trade_rows = await cur.fetchall()
+
+    payload = manager_payload(profile_row, my_roster_id)
+    payload["trades"] = [
+        {
+            "transaction_id": row[0],
+            "week": row[1],
+            "season": row[2],
+            "side_a_roster_id": row[3],
+            "side_b_roster_id": row[4],
+            "side_a_total_value": row[5],
+            "side_b_total_value": row[6],
+            "created_at": row[7],
+        }
+        for row in trade_rows
+    ]
+    return payload
 
 
 @router.get("/sync")
