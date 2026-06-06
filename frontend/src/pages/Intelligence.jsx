@@ -1,0 +1,310 @@
+import { useCallback, useMemo, useState } from 'react';
+import LeagueSelector from '../components/LeagueSelector.jsx';
+
+const SEVERITY_GROUPS = [
+  { key: 'critical', label: 'Critical', color: '#b42318', badge: 'CRITICAL' },
+  { key: 'notable', label: 'Notable', color: '#b54708', badge: 'NOTABLE' },
+  { key: 'fyi', label: 'FYI', color: '#027a48', badge: 'FYI' },
+];
+
+function cardStyle(borderColor = '#d9dee7') {
+  return {
+    background: '#ffffff',
+    border: `1px solid ${borderColor}`,
+    borderRadius: 8,
+    padding: 16,
+  };
+}
+
+function formatDate(value) {
+  if (!value) {
+    return 'Unknown time';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString();
+}
+
+function positionBadge(position, team) {
+  return [position || 'FA', team].filter(Boolean).join(' / ');
+}
+
+function trendText(value) {
+  const trend = Number(value || 0);
+  return trend > 0 ? `+${trend}` : String(trend);
+}
+
+function PlayerInitials({ name }) {
+  const initials = String(name || '?')
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join('')
+    .toUpperCase() || '?';
+
+  return (
+    <div
+      style={{
+        alignItems: 'center',
+        background: '#e0f2fe',
+        border: '1px solid #bae6fd',
+        borderRadius: 8,
+        color: '#075985',
+        display: 'flex',
+        fontWeight: 800,
+        height: 42,
+        justifyContent: 'center',
+        width: 42,
+      }}
+    >
+      {initials}
+    </div>
+  );
+}
+
+function AlertsSection({ alerts }) {
+  const groupedAlerts = useMemo(() => {
+    return alerts.reduce((groups, alert) => {
+      const severity = String(alert.severity || 'fyi').toLowerCase();
+      const key = severity === 'critical' || severity === 'notable' ? severity : 'fyi';
+      return { ...groups, [key]: [...(groups[key] || []), alert] };
+    }, {});
+  }, [alerts]);
+
+  if (alerts.length === 0) {
+    return <p style={{ color: '#667085', margin: 0 }}>No alerts</p>;
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 16 }}>
+      {SEVERITY_GROUPS.map((group) => {
+        const groupAlerts = groupedAlerts[group.key] || [];
+        if (groupAlerts.length === 0) {
+          return null;
+        }
+
+        return (
+          <section key={group.key} style={{ display: 'grid', gap: 10 }}>
+            <h3 style={{ color: group.color, margin: 0 }}>{group.label}</h3>
+            <div style={{ display: 'grid', gap: 10 }}>
+              {groupAlerts.map((alert) => (
+                <article key={`${alert.player_name}-${alert.alert_type}-${alert.created_at}`} style={cardStyle(group.color)}>
+                  <div style={{ alignItems: 'start', display: 'flex', gap: 14, justifyContent: 'space-between' }}>
+                    <div style={{ display: 'grid', gap: 6 }}>
+                      <strong>{alert.player_name || 'Unknown player'}</strong>
+                      <span style={{ color: '#475467', fontSize: 13 }}>
+                        {positionBadge(alert.position, alert.team)}
+                      </span>
+                      {alert.detail && <span style={{ color: '#475467' }}>{alert.detail}</span>}
+                    </div>
+                    <div style={{ display: 'grid', gap: 6, justifyItems: 'end', minWidth: 150 }}>
+                      <span
+                        style={{
+                          background: '#f2f4f7',
+                          borderRadius: 999,
+                          color: group.color,
+                          fontSize: 12,
+                          fontWeight: 800,
+                          padding: '4px 8px',
+                        }}
+                      >
+                        {group.badge} - {alert.alert_type || 'alert'}
+                      </span>
+                      <strong>
+                        {alert.old_value || 'N/A'} -&gt; {alert.new_value || 'N/A'}
+                      </strong>
+                      <span style={{ color: '#667085', fontSize: 12 }}>{formatDate(alert.created_at)}</span>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function NewsSection({ newsItems }) {
+  if (newsItems.length === 0) {
+    return <p style={{ color: '#667085', margin: 0 }}>No news</p>;
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 12 }}>
+      {newsItems.map((item) => (
+        <article key={`${item.sleeper_id}-${item.published_at}-${item.headline}`} style={cardStyle()}>
+          <div style={{ display: 'grid', gap: 12, gridTemplateColumns: '42px minmax(0, 1fr)' }}>
+            <PlayerInitials name={item.player_name} />
+            <div style={{ display: 'grid', gap: 8 }}>
+              <div>
+                <h3 style={{ margin: 0 }}>{item.headline || 'News update'}</h3>
+                {item.detail && <p style={{ color: '#475467', margin: '6px 0 0' }}>{item.detail}</p>}
+              </div>
+              <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                <span
+                  style={{
+                    background: '#eef2ff',
+                    border: '1px solid #c7d2fe',
+                    borderRadius: 999,
+                    color: '#3730a3',
+                    fontSize: 12,
+                    fontWeight: 800,
+                    padding: '4px 8px',
+                  }}
+                >
+                  {item.player_name || 'Unknown player'}
+                </span>
+                <span style={{ color: '#667085', fontSize: 13 }}>{formatDate(item.published_at)}</span>
+              </div>
+            </div>
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function MoversColumn({ title, players, color, emptyText }) {
+  return (
+    <section style={cardStyle()}>
+      <h3 style={{ marginTop: 0 }}>{title}</h3>
+      {players.length === 0 ? (
+        <p style={{ color: '#667085', marginBottom: 0 }}>{emptyText}</p>
+      ) : (
+        <div style={{ display: 'grid', gap: 10 }}>
+          {players.map((player) => (
+            <div
+              key={player.sleeper_id}
+              style={{
+                alignItems: 'center',
+                borderTop: '1px solid #e4e7ec',
+                display: 'flex',
+                gap: 12,
+                justifyContent: 'space-between',
+                paddingTop: 10,
+              }}
+            >
+              <div>
+                <strong>{player.name}</strong>
+                <div style={{ color: '#667085', fontSize: 13 }}>{positionBadge(player.position, player.team)}</div>
+              </div>
+              <div style={{ display: 'grid', gap: 2, justifyItems: 'end' }}>
+                <strong>{Number(player.adjusted_value || 0).toLocaleString()}</strong>
+                <span style={{ color, fontWeight: 800 }}>{trendText(player.trend_30d)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ValueMoversSection({ players }) {
+  const sortedByTrend = [...players].sort((a, b) => Number(b.trend_30d || 0) - Number(a.trend_30d || 0));
+  const risers = sortedByTrend.filter((player) => Number(player.trend_30d || 0) > 0).slice(0, 3);
+  const fallers = [...players]
+    .filter((player) => Number(player.trend_30d || 0) < 0)
+    .sort((a, b) => Number(a.trend_30d || 0) - Number(b.trend_30d || 0))
+    .slice(0, 3);
+
+  return (
+    <div style={{ display: 'grid', gap: 14, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+      <MoversColumn title="Top risers" players={risers} color="#15803d" emptyText="No risers on this roster" />
+      <MoversColumn title="Top fallers" players={fallers} color="#b42318" emptyText="No fallers on this roster" />
+    </div>
+  );
+}
+
+export default function Intelligence() {
+  const [selectedLeague, setSelectedLeague] = useState('');
+  const [alerts, setAlerts] = useState([]);
+  const [newsItems, setNewsItems] = useState([]);
+  const [rosterPlayers, setRosterPlayers] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const loadIntelligence = useCallback(async (leagueId) => {
+    setSelectedLeague(leagueId);
+    setLoading(true);
+    setError('');
+
+    try {
+      const [alertsResponse, newsResponse, rosterResponse] = await Promise.all([
+        fetch(`/fantasy/alerts/${leagueId}`),
+        fetch(`/fantasy/news/${leagueId}`),
+        fetch(`/fantasy/league/${leagueId}/roster`),
+      ]);
+
+      if (!alertsResponse.ok) {
+        throw new Error('Unable to load alerts');
+      }
+      if (!newsResponse.ok) {
+        throw new Error('Unable to load news');
+      }
+      if (!rosterResponse.ok) {
+        throw new Error('Unable to load roster movers');
+      }
+
+      const [alertsData, newsData, rosterData] = await Promise.all([
+        alertsResponse.json(),
+        newsResponse.json(),
+        rosterResponse.json(),
+      ]);
+
+      setAlerts(Array.isArray(alertsData) ? alertsData : []);
+      setNewsItems(Array.isArray(newsData) ? newsData : []);
+      setRosterPlayers(Array.isArray(rosterData.players) ? rosterData.players : []);
+    } catch (err) {
+      setAlerts([]);
+      setNewsItems([]);
+      setRosterPlayers([]);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  return (
+    <main style={{ background: '#f6f7fb', minHeight: '100vh', padding: 24 }}>
+      <section style={{ display: 'grid', gap: 22, margin: '0 auto', maxWidth: 1120 }}>
+        <header style={{ display: 'grid', gap: 16 }}>
+          <div>
+            <h1 style={{ margin: 0 }}>Intelligence</h1>
+            <p style={{ color: '#667085', margin: '6px 0 0' }}>
+              Alerts, roster news, and value movement for the selected league.
+            </p>
+          </div>
+          <LeagueSelector onSelect={loadIntelligence} />
+        </header>
+
+        {loading && <p>Loading...</p>}
+        {error && <p style={{ color: '#b42318' }}>{error}</p>}
+
+        {!loading && !error && selectedLeague && (
+          <div style={{ display: 'grid', gap: 22 }}>
+            <section style={{ display: 'grid', gap: 12 }}>
+              <h2 style={{ margin: 0 }}>Alerts</h2>
+              <AlertsSection alerts={alerts} />
+            </section>
+
+            <section style={{ display: 'grid', gap: 12 }}>
+              <h2 style={{ margin: 0 }}>News Feed</h2>
+              <NewsSection newsItems={newsItems} />
+            </section>
+
+            <section style={{ display: 'grid', gap: 12 }}>
+              <h2 style={{ margin: 0 }}>Value Movers</h2>
+              <ValueMoversSection players={rosterPlayers} />
+            </section>
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
