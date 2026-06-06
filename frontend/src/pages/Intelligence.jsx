@@ -1,5 +1,8 @@
 import { useCallback, useMemo, useState } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
+import DivergenceCard from '../components/DivergenceCard.jsx';
+
+const KTC_RANKINGS_URL = 'https://keeptradecut.com/api/rankings?format=superflex&numQBs=1';
 
 const SEVERITY_GROUPS = [
   { key: 'critical', label: 'Critical', color: '#b42318', badge: 'CRITICAL' },
@@ -33,6 +36,99 @@ function formatDate(value) {
     return value;
   }
   return date.toLocaleString();
+}
+
+function normalizeName(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b\.?/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function playerKey(name, position) {
+  return `${normalizeName(name)}:${String(position || '').toUpperCase()}`;
+}
+
+function flattenKtcPayload(payload) {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  const possibleArrays = [
+    payload?.players,
+    payload?.rankings,
+    payload?.data,
+    payload?.value,
+    payload?.values,
+  ];
+  return possibleArrays.find(Array.isArray) || [];
+}
+
+function ktcPlayerName(player) {
+  return player.playerName || player.name || player.fullName || player.displayName || player.player?.name || '';
+}
+
+function ktcPlayerPosition(player) {
+  return player.position || player.pos || player.player?.position || '';
+}
+
+function buildKtcRankMap(payload) {
+  const players = flattenKtcPayload(payload);
+  const rankMap = new Map();
+
+  players.forEach((player, index) => {
+    const name = ktcPlayerName(player);
+    const position = ktcPlayerPosition(player);
+    const key = playerKey(name, position);
+    if (!key.startsWith(':') && !rankMap.has(key)) {
+      rankMap.set(key, Number(player.rank || player.overallRank || index + 1));
+    }
+  });
+
+  return rankMap;
+}
+
+async function fetchKtcRankMap() {
+  const response = await fetch(KTC_RANKINGS_URL);
+  if (!response.ok) {
+    throw new Error('KTC rankings unavailable');
+  }
+  return buildKtcRankMap(await response.json());
+}
+
+function findKtcDivergences(rosterPlayers, ktcRankMap) {
+  const rankedRoster = [...rosterPlayers]
+    .filter((player) => player.name && player.position)
+    .sort((a, b) => Number(b.value_sf || b.adjusted_value || 0) - Number(a.value_sf || a.adjusted_value || 0));
+
+  return rankedRoster
+    .map((player, index) => {
+      const fantasyCalcRank = index + 1;
+      const ktcRank = ktcRankMap.get(playerKey(player.name, player.position));
+      if (!ktcRank) {
+        return null;
+      }
+
+      const rankDelta = ktcRank - fantasyCalcRank;
+      if (Math.abs(rankDelta) < 20) {
+        return null;
+      }
+
+      return {
+        sleeper_id: player.sleeper_id,
+        name: player.name,
+        position: player.position,
+        team: player.team,
+        fantasyCalcValue: player.value_sf || player.adjusted_value || 0,
+        fantasyCalcRank,
+        ktcRank,
+        rankDelta,
+        signal: rankDelta <= -20 ? 'SELL_HIGH' : 'BUY_LOW',
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => Math.abs(b.rankDelta) - Math.abs(a.rankDelta))
+    .slice(0, 8);
 }
 
 function positionBadge(position, team) {
@@ -233,11 +329,35 @@ function ValueMoversSection({ players }) {
   );
 }
 
+function KtcDivergenceSection({ divergences, status }) {
+  if (status === 'loading') {
+    return <p style={{ color: '#667085', margin: 0 }}>Loading KTC comparison...</p>;
+  }
+
+  if (status === 'unavailable') {
+    return <p style={{ color: '#667085', margin: 0 }}>KTC rankings unavailable</p>;
+  }
+
+  if (divergences.length === 0) {
+    return <p style={{ color: '#667085', margin: 0 }}>No significant KTC divergences</p>;
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+      {divergences.map((divergence) => (
+        <DivergenceCard key={`${divergence.sleeper_id}-${divergence.signal}`} divergence={divergence} />
+      ))}
+    </div>
+  );
+}
+
 export default function Intelligence() {
   const [selectedLeague, setSelectedLeague] = useState('');
   const [alerts, setAlerts] = useState([]);
   const [newsItems, setNewsItems] = useState([]);
   const [rosterPlayers, setRosterPlayers] = useState([]);
+  const [ktcDivergences, setKtcDivergences] = useState([]);
+  const [ktcStatus, setKtcStatus] = useState('idle');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -245,6 +365,8 @@ export default function Intelligence() {
     setSelectedLeague(leagueId);
     setLoading(true);
     setError('');
+    setKtcDivergences([]);
+    setKtcStatus('idle');
 
     try {
       const [alertsResponse, newsResponse, rosterResponse] = await Promise.all([
@@ -265,14 +387,27 @@ export default function Intelligence() {
         optionalJson(newsResponse),
         rosterResponse.json(),
       ]);
+      const players = Array.isArray(rosterData.players) ? rosterData.players : [];
 
       setAlerts(Array.isArray(alertsData) ? alertsData : []);
       setNewsItems(newsData);
-      setRosterPlayers(Array.isArray(rosterData.players) ? rosterData.players : []);
+      setRosterPlayers(players);
+      setKtcStatus('loading');
+
+      try {
+        const ktcRankMap = await fetchKtcRankMap();
+        setKtcDivergences(findKtcDivergences(players, ktcRankMap));
+        setKtcStatus('ready');
+      } catch (ktcError) {
+        setKtcDivergences([]);
+        setKtcStatus('unavailable');
+      }
     } catch (err) {
       setAlerts([]);
       setNewsItems([]);
       setRosterPlayers([]);
+      setKtcDivergences([]);
+      setKtcStatus('idle');
       setError(err.message);
     } finally {
       setLoading(false);
@@ -286,7 +421,7 @@ export default function Intelligence() {
           <div>
             <h1 style={{ margin: 0 }}>Intelligence</h1>
             <p style={{ color: '#667085', margin: '6px 0 0' }}>
-              Alerts, roster news, and significant value movement for the selected league.
+              Alerts, roster news, market divergences, and significant value movement for the selected league.
             </p>
           </div>
           <LeagueSelector onSelect={loadIntelligence} />
@@ -305,6 +440,11 @@ export default function Intelligence() {
             <section style={{ display: 'grid', gap: 12 }}>
               <h2 style={{ margin: 0 }}>News Feed</h2>
               <NewsSection newsItems={newsItems} />
+            </section>
+
+            <section style={{ display: 'grid', gap: 12 }}>
+              <h2 style={{ margin: 0 }}>KTC Divergence</h2>
+              <KtcDivergenceSection divergences={ktcDivergences} status={ktcStatus} />
             </section>
 
             <section style={{ display: 'grid', gap: 12 }}>
