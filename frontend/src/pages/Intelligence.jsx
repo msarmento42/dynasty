@@ -16,6 +16,14 @@ function cardStyle(borderColor = '#d9dee7') {
   };
 }
 
+async function optionalJson(response) {
+  if (!response.ok) {
+    return [];
+  }
+  const data = await response.json();
+  return Array.isArray(data) ? data : [];
+}
+
 function formatDate(value) {
   if (!value) {
     return 'Unknown time';
@@ -137,7 +145,7 @@ function NewsSection({ newsItems }) {
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       {newsItems.map((item) => (
-        <article key={`${item.sleeper_id}-${item.published_at}-${item.headline}`} style={cardStyle()}>
+        <article key={`${item.sleeper_id || item.player_name}-${item.published_at}-${item.headline}`} style={cardStyle()}>
           <div style={{ display: 'grid', gap: 12, gridTemplateColumns: '42px minmax(0, 1fr)' }}>
             <PlayerInitials name={item.player_name} />
             <div style={{ display: 'grid', gap: 8 }}>
@@ -159,6 +167,7 @@ function NewsSection({ newsItems }) {
                 >
                   {item.player_name || 'Unknown player'}
                 </span>
+                {item.source && <span style={{ color: '#475467', fontSize: 13 }}>{item.source}</span>}
                 <span style={{ color: '#667085', fontSize: 13 }}>{formatDate(item.published_at)}</span>
               </div>
             </div>
@@ -206,17 +215,20 @@ function MoversColumn({ title, players, color, emptyText }) {
 }
 
 function ValueMoversSection({ players }) {
-  const sortedByTrend = [...players].sort((a, b) => Number(b.trend_30d || 0) - Number(a.trend_30d || 0));
-  const risers = sortedByTrend.filter((player) => Number(player.trend_30d || 0) > 0).slice(0, 3);
-  const fallers = [...players]
+  const significantPlayers = players.filter((player) => Math.abs(Number(player.trend_30d || 0)) > 100);
+  const risers = significantPlayers
+    .filter((player) => Number(player.trend_30d || 0) > 0)
+    .sort((a, b) => Number(b.trend_30d || 0) - Number(a.trend_30d || 0))
+    .slice(0, 3);
+  const fallers = significantPlayers
     .filter((player) => Number(player.trend_30d || 0) < 0)
     .sort((a, b) => Number(a.trend_30d || 0) - Number(b.trend_30d || 0))
     .slice(0, 3);
 
   return (
     <div style={{ display: 'grid', gap: 14, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
-      <MoversColumn title="Top risers" players={risers} color="#15803d" emptyText="No risers on this roster" />
-      <MoversColumn title="Top fallers" players={fallers} color="#b42318" emptyText="No fallers on this roster" />
+      <MoversColumn title="Top risers" players={risers} color="#15803d" emptyText="No risers above +100" />
+      <MoversColumn title="Top fallers" players={fallers} color="#b42318" emptyText="No fallers below -100" />
     </div>
   );
 }
@@ -237,15 +249,12 @@ export default function Intelligence() {
     try {
       const [alertsResponse, newsResponse, rosterResponse] = await Promise.all([
         fetch(`/fantasy/alerts/${leagueId}`),
-        fetch(`/fantasy/news/${leagueId}`),
+        fetch('/fantasy/news'),
         fetch(`/fantasy/league/${leagueId}/roster`),
       ]);
 
       if (!alertsResponse.ok) {
         throw new Error('Unable to load alerts');
-      }
-      if (!newsResponse.ok) {
-        throw new Error('Unable to load news');
       }
       if (!rosterResponse.ok) {
         throw new Error('Unable to load roster movers');
@@ -253,12 +262,12 @@ export default function Intelligence() {
 
       const [alertsData, newsData, rosterData] = await Promise.all([
         alertsResponse.json(),
-        newsResponse.json(),
+        optionalJson(newsResponse),
         rosterResponse.json(),
       ]);
 
       setAlerts(Array.isArray(alertsData) ? alertsData : []);
-      setNewsItems(Array.isArray(newsData) ? newsData : []);
+      setNewsItems(newsData);
       setRosterPlayers(Array.isArray(rosterData.players) ? rosterData.players : []);
     } catch (err) {
       setAlerts([]);
@@ -277,7 +286,7 @@ export default function Intelligence() {
           <div>
             <h1 style={{ margin: 0 }}>Intelligence</h1>
             <p style={{ color: '#667085', margin: '6px 0 0' }}>
-              Alerts, roster news, and value movement for the selected league.
+              Alerts, roster news, and significant value movement for the selected league.
             </p>
           </div>
           <LeagueSelector onSelect={loadIntelligence} />
