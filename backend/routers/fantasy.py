@@ -320,6 +320,55 @@ async def get_alerts(league_id: str):
     ]
 
 
+@router.get("/news/{league_id}")
+async def get_news(league_id: str):
+    """Return stored news items for players on my roster in this league."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        league = await get_league_row(db, league_id)
+        my_roster_id = league["config"].get("my_roster_id", league["my_roster_id"])
+
+        async with db.execute(
+            "SELECT player_ids_json FROM rosters WHERE league_id=? AND roster_id=?",
+            (league_id, my_roster_id),
+        ) as cur:
+            row = await cur.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Roster not found. Run daily sync first.")
+
+        player_ids = json.loads(row[0] or "[]")
+        if not player_ids:
+            return []
+
+        placeholders = ",".join("?" * len(player_ids))
+        query = f"""
+            SELECT
+                n.sleeper_id,
+                COALESCE(n.player_name, p.name),
+                n.headline,
+                n.detail,
+                n.published_at
+            FROM news_items n
+            LEFT JOIN players p ON p.sleeper_id = n.sleeper_id
+            WHERE n.sleeper_id IN ({placeholders})
+            ORDER BY n.published_at DESC
+            LIMIT 10
+        """
+        async with db.execute(query, player_ids) as cur:
+            rows = await cur.fetchall()
+
+    return [
+        {
+            "sleeper_id": row[0],
+            "player_name": row[1],
+            "headline": row[2],
+            "detail": row[3],
+            "published_at": row[4],
+        }
+        for row in rows
+    ]
+
+
 @router.get("/calibration/{league_id}")
 async def get_calibration(league_id: str):
     """Return market calibration data for a league."""
