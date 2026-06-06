@@ -1,0 +1,52 @@
+name: AGIOS Codex Dispatch
+
+on:
+  schedule:
+    - cron: '0 */4 * * *'   # every 4 hours
+  workflow_dispatch:          # also runnable manually from Actions tab
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Find next ready issue
+        id: find
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ISSUE=$(gh issue list \
+            --repo ${{ github.repository }} \
+            --label "agios:ready-for-codex" \
+            --state open \
+            --json number \
+            --jq '[.[].number] | sort | .[0]')
+
+          if [ -z "$ISSUE" ] || [ "$ISSUE" = "null" ]; then
+            echo "No agios:ready-for-codex issues found — nothing to dispatch"
+            echo "issue=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Skip if issue already has an open PR
+          PR_COUNT=$(gh pr list \
+            --repo ${{ github.repository }} \
+            --state open \
+            --json body \
+            --jq "[.[] | select(.body | test(\"#${ISSUE}\"))] | length")
+
+          if [ "${PR_COUNT:-0}" -gt "0" ]; then
+            echo "Issue #$ISSUE already has an open PR — skipping"
+            echo "issue=" >> $GITHUB_OUTPUT
+          else
+            echo "Dispatching issue #$ISSUE"
+            echo "issue=$ISSUE" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Trigger Codex
+        if: steps.find.outputs.issue != ''
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_TRIGGER_TOKEN }}
+        run: |
+          gh issue comment ${{ steps.find.outputs.issue }} \
+            --repo ${{ github.repository }} \
+            --body "@codex please implement this issue following the AGENTS.md in this repo and CODEX_BRIEFING.md in msarmento42/agios-control."
