@@ -2,7 +2,7 @@
 
 import math
 
-# ── League configs ─────────────────────────────────────────────────────────────
+# ── League configs ─────────────────────────────────────────────────────────
 
 LEAGUE_CONFIG = {
     "1330499939976880128": {
@@ -15,7 +15,7 @@ LEAGUE_CONFIG = {
     },
     "1315139749693886464": {
         "name": "Four Horsemen Vol. 8",
-        "base_format": "1qb",
+        "base_format": "4qb",
         "n_teams": 4,
         "te_discount": 1.0,
         "scoring_bonus_multiplier": 1.15,
@@ -23,7 +23,7 @@ LEAGUE_CONFIG = {
     },
     "1312285408079380481": {
         "name": "Four Horsemen All-Stars",
-        "base_format": "1qb",
+        "base_format": "4qb",
         "n_teams": 4,
         "te_discount": 1.0,
         "scoring_bonus_multiplier": 1.15,
@@ -31,7 +31,7 @@ LEAGUE_CONFIG = {
     },
 }
 
-# ── Career stage curves ────────────────────────────────────────────────────────
+# ── Career stage curves ─────────────────────────────────────────────────────
 
 AGE_CURVES = {
     "QB": {"rising": (0, 27), "prime": (27, 31), "declining": (31, 99)},
@@ -59,7 +59,7 @@ def years_in_prime_remaining(position: str, age: float) -> float:
     return max(0.0, round(remaining, 1))
 
 
-# ── Value adjustments ──────────────────────────────────────────────────────────
+# ── Value adjustments ───────────────────────────────────────────────────────
 
 def adjusted_value(base_value: int, position: str, league_id: str) -> int:
     """Apply league-specific adjustments to a raw FantasyCalc value."""
@@ -80,7 +80,7 @@ def adjusted_value(base_value: int, position: str, league_id: str) -> int:
     return int(value)
 
 
-# ── Pick valuation ─────────────────────────────────────────────────────────────
+# ── Pick valuation ──────────────────────────────────────────────────────────
 
 def pick_value(round: int, years_away: int, n_teams: int) -> int:
     """
@@ -94,7 +94,7 @@ def pick_value(round: int, years_away: int, n_teams: int) -> int:
     return int(base * year_discount * scarcity)
 
 
-# ── Player enrichment ──────────────────────────────────────────────────────────
+# ── Player enrichment ───────────────────────────────────────────────────────
 
 def enrich_player(player: dict, league_id: str) -> dict:
     """
