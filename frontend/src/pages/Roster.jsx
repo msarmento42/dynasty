@@ -1,12 +1,14 @@
 import { useCallback, useMemo, useState } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
 import PlayerCard from '../components/PlayerCard.jsx';
+import RosterGrade from '../components/RosterGrade.jsx';
 
 const POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
 
 export default function Roster() {
   const [selectedLeague, setSelectedLeague] = useState(null);
   const [rosterData, setRosterData] = useState(null);
+  const [rosterGrade, setRosterGrade] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -16,13 +18,26 @@ export default function Roster() {
     setError('');
 
     try {
-      const response = await fetch(`/fantasy/league/${leagueId}/roster`);
-      if (!response.ok) {
+      const [rosterResponse, gradesResponse] = await Promise.all([
+        fetch(`/fantasy/league/${leagueId}/roster`),
+        fetch(`/fantasy/league/${leagueId}/grades`),
+      ]);
+      if (!rosterResponse.ok) {
         throw new Error('Unable to load roster');
       }
-      setRosterData(await response.json());
+      if (!gradesResponse.ok) {
+        throw new Error('Unable to load roster grade');
+      }
+
+      const nextRosterData = await rosterResponse.json();
+      const grades = await gradesResponse.json();
+      const mine = grades.find((grade) => grade.is_mine || grade.roster_id === nextRosterData.my_roster_id);
+
+      setRosterData(nextRosterData);
+      setRosterGrade(mine || null);
     } catch (err) {
       setRosterData(null);
+      setRosterGrade(null);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -58,6 +73,7 @@ export default function Roster() {
                 border: '1px solid #d9dee7',
                 borderRadius: 8,
                 display: 'flex',
+                gap: 16,
                 justifyContent: 'space-between',
                 padding: 18,
               }}
@@ -66,9 +82,12 @@ export default function Roster() {
                 <h2 style={{ margin: 0 }}>{rosterData.league_name}</h2>
                 <p style={{ color: '#667085', margin: '4px 0 0' }}>Selected league: {selectedLeague}</p>
               </div>
-              <strong style={{ fontSize: 22 }}>
-                {Number(rosterData.total_adjusted_value || 0).toLocaleString()}
-              </strong>
+              <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'end' }}>
+                <RosterGrade grade={rosterGrade} />
+                <strong style={{ fontSize: 22 }}>
+                  {Number(rosterData.total_adjusted_value || 0).toLocaleString()}
+                </strong>
+              </div>
             </header>
 
             {POSITION_ORDER.map((position) => {
