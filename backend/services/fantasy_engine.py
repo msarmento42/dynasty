@@ -80,7 +80,7 @@ def adjusted_value(base_value: int, position: str, league_id: str) -> int:
     return int(value)
 
 
-def qb_premium(player: dict, league_id: str) -> dict | None:
+def qb_premium(player: dict, league_id: str):
     """Return QB value inflation details for Four Horsemen 4QB leagues."""
     config = LEAGUE_CONFIG.get(league_id, {})
     if config.get("base_format") != "4qb" or player.get("position") != "QB":
