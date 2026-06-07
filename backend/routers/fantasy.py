@@ -252,6 +252,73 @@ async def get_roster_grades(league_id: str):
     return grades
 
 
+@router.get("/league/{league_id}/power-rankings")
+async def get_power_rankings(league_id: str):
+    """Rank every team by player value plus current pick capital."""
+    current_year = datetime.now(timezone.utc).year
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        league = await get_league_row(db, league_id)
+        my_roster_id = league["config"].get("my_roster_id", league["my_roster_id"])
+        n_teams = league.get("n_teams") or LEAGUE_CONFIG.get(league_id, {}).get("n_teams", 12)
+
+        async with db.execute(
+            "SELECT roster_id, owner_display_name, player_ids_json "
+            "FROM rosters WHERE league_id=? ORDER BY roster_id",
+            (league_id,),
+        ) as cur:
+            roster_rows = await cur.fetchall()
+
+        if not roster_rows:
+            raise HTTPException(status_code=404, detail="Rosters not found. Run daily sync first.")
+
+        picks_by_roster = {}
+        async with db.execute(
+            "SELECT season, round, original_owner_id, current_owner_id FROM picks WHERE league_id=?",
+            (league_id,),
+        ) as cur:
+            pick_rows = await cur.fetchall()
+
+        for season, round_number, original_owner_id, current_owner_id in pick_rows:
+            owner_id = current_owner_id or original_owner_id
+            years_away = int(season or current_year) - current_year
+            value = pick_value(int(round_number or 0), years_away, int(n_teams or 12))
+            picks_by_roster.setdefault(owner_id, []).append(value)
+
+        rankings = []
+        for roster_id, owner, player_ids_json in roster_rows:
+            player_ids = json.loads(player_ids_json or "[]")
+            players = await get_players_for_ids(db, player_ids, league_id)
+            players.sort(key=lambda player: player.get("adjusted_value", 0), reverse=True)
+
+            player_value = sum(player.get("adjusted_value", 0) for player in players)
+            starter_value = sum(player.get("adjusted_value", 0) for player in players[:15])
+            bench_value = player_value - starter_value
+            pick_value_total = sum(picks_by_roster.get(roster_id, []))
+            total_value = player_value + pick_value_total
+
+            rankings.append({
+                "league_id": league_id,
+                "roster_id": roster_id,
+                "owner_display_name": owner or f"Team {roster_id}",
+                "is_mine": roster_id == my_roster_id,
+                "total_value": total_value,
+                "starter_value": starter_value,
+                "bench_value": bench_value,
+                "pick_value": pick_value_total,
+                "player_count": len(players),
+                "pick_count": len(picks_by_roster.get(roster_id, [])),
+            })
+
+    rankings.sort(key=lambda team: team["total_value"], reverse=True)
+    leader_value = rankings[0]["total_value"] if rankings else 0
+    for index, team in enumerate(rankings, start=1):
+        team["rank"] = index
+        team["delta_from_1"] = team["total_value"] - leader_value
+
+    return rankings
+
+
 @router.post("/trade/evaluate")
 async def evaluate_trade(req: TradeRequest):
     """Evaluate a proposed trade - returns values, delta, and verdict."""
