@@ -64,3 +64,15 @@ jobs:
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "_Queue audit complete. Codex heartbeat handles execution._" >> $GITHUB_STEP_SUMMARY
+
+      - name: Validate issue schemas
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 .github/scripts/validate_issues.py
+
+      - name: Reset stale in-progress locks
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 .github/scripts/reset_stale_locks.py
