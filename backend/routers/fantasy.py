@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from backend.database import DB_PATH
 from backend.scripts import daily_sync
 from backend.services.fantasy_engine import LEAGUE_CONFIG, enrich_player, pick_value
+from backend.services.fantasycalc import fetch_rookie_rankings
 from backend.services.proposals import generate_proposals
 from backend.services.roster_grade import grade_roster
 
@@ -127,6 +128,38 @@ async def get_leagues():
         }
         for r in rows
     ]
+
+
+@router.get("/rookies")
+async def get_rookies(num_qbs: int = 2):
+    """Return rookie-only dynasty rankings enriched with career context."""
+    if num_qbs not in (1, 2):
+        raise HTTPException(status_code=400, detail="num_qbs must be 1 or 2.")
+
+    raw_players = await fetch_rookie_rankings(num_qbs=num_qbs)
+    league_id = "1330499939976880128"
+    enriched = []
+    for player in raw_players:
+        value = player.get("value", 0)
+        normalized = {
+            "sleeper_id": player.get("sleeper_id"),
+            "name": player.get("name"),
+            "position": player.get("position"),
+            "team": player.get("team"),
+            "age": player.get("age"),
+            "value_sf": value,
+            "value_1qb": value,
+            "trend_30d": player.get("trend_30d", 0),
+            "rank": player.get("rank", 0),
+            "pos_rank": player.get("pos_rank", 0),
+        }
+        enriched.append(enrich_player(normalized, league_id))
+
+    enriched.sort(key=lambda player: player.get("adjusted_value", 0), reverse=True)
+    for index, player in enumerate(enriched, start=1):
+        player["rookie_rank"] = index
+        player["format"] = "SF" if num_qbs == 2 else "1QB"
+    return enriched
 
 
 @router.get("/league/{league_id}/roster")
