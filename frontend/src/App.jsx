@@ -4,6 +4,7 @@ import TradeBuilder from './pages/TradeBuilder.jsx';
 import Proposals from './pages/Proposals.jsx';
 import Intelligence from './pages/Intelligence.jsx';
 import PowerRankings from './pages/PowerRankings.jsx';
+import Portfolio from './pages/Portfolio.jsx';
 
 export default function App() {
   return (
@@ -14,6 +15,7 @@ export default function App() {
         <Link to="/proposals">Proposals</Link>
         <Link to="/intelligence">Intelligence</Link>
         <Link to="/power-rankings">Power Rankings</Link>
+        <Link to="/portfolio">Portfolio</Link>
       </nav>
       <Routes>
         <Route path="/" element={<Roster />} />
@@ -21,6 +23,7 @@ export default function App() {
         <Route path="/proposals" element={<Proposals />} />
         <Route path="/intelligence" element={<Intelligence />} />
         <Route path="/power-rankings" element={<PowerRankings />} />
+        <Route path="/portfolio" element={<Portfolio />} />
       </Routes>
     </BrowserRouter>
   );
