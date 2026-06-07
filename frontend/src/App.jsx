@@ -5,6 +5,7 @@ import Proposals from './pages/Proposals.jsx';
 import Intelligence from './pages/Intelligence.jsx';
 import PowerRankings from './pages/PowerRankings.jsx';
 import Portfolio from './pages/Portfolio.jsx';
+import Rookies from './pages/Rookies.jsx';
 
 export default function App() {
   return (
@@ -16,6 +17,7 @@ export default function App() {
         <Link to="/intelligence">Intelligence</Link>
         <Link to="/power-rankings">Power Rankings</Link>
         <Link to="/portfolio">Portfolio</Link>
+        <Link to="/rookies">Rookies</Link>
       </nav>
       <Routes>
         <Route path="/" element={<Roster />} />
@@ -24,6 +26,7 @@ export default function App() {
         <Route path="/intelligence" element={<Intelligence />} />
         <Route path="/power-rankings" element={<PowerRankings />} />
         <Route path="/portfolio" element={<Portfolio />} />
+        <Route path="/rookies" element={<Rookies />} />
       </Routes>
     </BrowserRouter>
   );
