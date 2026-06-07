@@ -9,6 +9,7 @@ import aiosqlite
 
 from backend.services import fantasycalc, sleeper, trade_history
 from backend.services.fantasy_engine import LEAGUE_CONFIG
+from backend.services.sleeper import LEAGUES
 
 
 DB_PATH = "backend/fantasy.db"
@@ -75,7 +76,7 @@ async def sync_league(db: aiosqlite.Connection, league_id: str, config: dict) ->
             config["name"],
             config["n_teams"],
             config["base_format"].upper(),
-            config.get("my_roster_id", 1),
+            LEAGUES.get(league_id, {}).get("my_roster_id", 1),
             json.dumps(config),
         ),
     )
