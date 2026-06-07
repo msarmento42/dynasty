@@ -44,7 +44,12 @@ def _normalize_item(item: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-async def fetch_values(num_qbs: int = 2, num_teams: int = 12, ppr: float = 1.0) -> list[dict[str, Any]]:
+async def fetch_values(
+    num_qbs: int = 2,
+    num_teams: int = 12,
+    ppr: float = 1.0,
+    rookies_only: bool = False,
+) -> list[dict[str, Any]]:
     """Fetch current dynasty values from FantasyCalc and return normalized player records."""
     params = {
         "isDynasty": "true",
@@ -52,6 +57,9 @@ async def fetch_values(num_qbs: int = 2, num_teams: int = 12, ppr: float = 1.0) 
         "numTeams": num_teams,
         "ppr": ppr,
     }
+    if rookies_only:
+        params["rookiesOnly"] = "true"
+
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.get(BASE, params=params)
         response.raise_for_status()
@@ -74,3 +82,8 @@ async def fetch_sf_values() -> list[dict[str, Any]]:
 async def fetch_1qb_values() -> list[dict[str, Any]]:
     """Fetch 1QB dynasty values from FantasyCalc."""
     return await fetch_values(num_qbs=1)
+
+
+async def fetch_rookie_rankings(num_qbs: int = 2) -> list[dict[str, Any]]:
+    """Fetch rookie-only dynasty rankings from FantasyCalc."""
+    return await fetch_values(num_qbs=num_qbs, rookies_only=True)
