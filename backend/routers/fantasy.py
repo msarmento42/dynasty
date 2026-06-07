@@ -319,6 +319,101 @@ async def get_power_rankings(league_id: str):
     return rankings
 
 
+@router.get("/portfolio")
+async def get_portfolio():
+    """Return the configured user's roster portfolio across every synced league."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT league_id, name, n_teams, format, my_roster_id, config_json "
+            "FROM leagues ORDER BY name"
+        ) as cur:
+            league_rows = await cur.fetchall()
+
+        if not league_rows:
+            raise HTTPException(status_code=404, detail="Leagues not found. Run daily sync first.")
+
+        leagues = []
+        player_ownership = {}
+        positional_breakdown = {}
+        total_adjusted_value = 0
+
+        for league_row in league_rows:
+            league_id = league_row[0]
+            league_config = json.loads(league_row[5] or "{}")
+            my_roster_id = league_config.get("my_roster_id", league_row[4])
+
+            async with db.execute(
+                "SELECT player_ids_json FROM rosters WHERE league_id=? AND roster_id=?",
+                (league_id, my_roster_id),
+            ) as cur:
+                roster_row = await cur.fetchone()
+
+            player_ids = json.loads((roster_row[0] if roster_row else None) or "[]")
+            players = await get_players_for_ids(db, player_ids, league_id)
+            players.sort(key=lambda player: player.get("adjusted_value", 0), reverse=True)
+            league_total = sum(player.get("adjusted_value", 0) for player in players)
+            total_adjusted_value += league_total
+
+            for player in players:
+                sleeper_id = player.get("sleeper_id")
+                if sleeper_id:
+                    player_ownership.setdefault(sleeper_id, {
+                        "sleeper_id": sleeper_id,
+                        "name": player.get("name"),
+                        "position": player.get("position"),
+                        "team": player.get("team"),
+                        "adjusted_value": player.get("adjusted_value", 0),
+                        "leagues": [],
+                    })["leagues"].append({
+                        "league_id": league_id,
+                        "league_name": league_row[1],
+                    })
+
+                position = player.get("position") or "Other"
+                position_stats = positional_breakdown.setdefault(position, {"count": 0, "value": 0})
+                position_stats["count"] += 1
+                position_stats["value"] += player.get("adjusted_value", 0)
+
+            leagues.append({
+                "league_id": league_id,
+                "league_name": league_row[1],
+                "format": league_row[3],
+                "my_roster_id": my_roster_id,
+                "total_adjusted_value": league_total,
+                "players": players,
+            })
+
+    concentrated_ids = {
+        sleeper_id
+        for sleeper_id, ownership in player_ownership.items()
+        if len(ownership["leagues"]) >= 2
+    }
+
+    for league in leagues:
+        for player in league["players"]:
+            ownership = player_ownership.get(player.get("sleeper_id"), {"leagues": []})
+            player["concentrated"] = player.get("sleeper_id") in concentrated_ids
+            player["owned_leagues"] = ownership["leagues"]
+
+    concentrated_players = [
+        ownership
+        for ownership in player_ownership.values()
+        if len(ownership["leagues"]) >= 2
+    ]
+    concentrated_players.sort(key=lambda player: player.get("adjusted_value", 0), reverse=True)
+
+    return {
+        "leagues": leagues,
+        "stats": {
+            "total_unique_players": len(player_ownership),
+            "concentration_risk_players": len(concentrated_players),
+            "total_adjusted_value": total_adjusted_value,
+            "positional_breakdown": positional_breakdown,
+        },
+        "concentrated_players": concentrated_players,
+    }
+
+
 @router.post("/trade/evaluate")
 async def evaluate_trade(req: TradeRequest):
     """Evaluate a proposed trade - returns values, delta, and verdict."""
