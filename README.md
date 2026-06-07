@@ -11,6 +11,20 @@ roster construction, and historical trade data.
 
 FastAPI + React/Vite + SQLite (same as Life OS)
 
+## Development
+
+Run both local servers with:
+
+```bash
+./start.sh
+```
+
+The startup script runs the FastAPI backend on port `8001` and starts the Vite frontend. The frontend proxy reads `VITE_API_PORT` with an `8001` fallback, so you can target a different backend port with:
+
+```bash
+VITE_API_PORT=9000 npm run dev
+```
+
 ## Data sources
 
 - **Sleeper API** — leagues, rosters, injuries, depth charts, trending
