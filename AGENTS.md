@@ -65,3 +65,32 @@ If blocked mid-implementation:
 Reason: <scope-conflict | ci-failing | ambiguous-issue | human-decision-required>
 Required action: <specific thing needed to unblock>
 ```
+
+---
+
+## Automated enforcement (B-series)
+
+These run automatically — you do not need to invoke them manually.
+
+### Scope Check (every PR)
+`.github/scripts/check_scope.py` validates every PR before merge:
+- Gate 1: PR body must contain `Closes #N` — fails CI immediately if missing
+- Gate 2: Changed files must not be in blocked paths (always-blocked: `.github/`, `.agios/`, `.env`)
+- Gate 3: Changed files must be within the issue's `Allowed paths` (if defined)
+
+If scope check fails: remove out-of-scope files from the branch and repush, or ask Claude to widen the issue.
+
+### Policy-gated auto-merge (triggers on CI success)
+`.github/workflows/auto-merge.yml` fires when CI completes successfully:
+1. PR body has `Closes #N` ✓
+2. Issue has `**Auto-merge allowed:** yes` ✓
+3. Issue does NOT have `**Risk level:** HIGH` ✓
+
+If all three pass, `gh pr merge --auto --squash` is called. Do not manually merge.
+
+### Queue health (scheduled)
+`.github/workflows/queue-health.yml` runs on a schedule:
+- `validate_issues.py` — checks all `agios:ready-for-codex` issues for required fields; flags malformed ones to `agios:needs-scope`
+- `reset_stale_locks.py` — resets any `agios:in-progress` issue with no linked PR after 2 hours back to `agios:ready-for-codex`
+
+You may see `[AGIOS STALE LOCK RESET]` comments on issues — this is normal. Re-claim on the next wake-up.
