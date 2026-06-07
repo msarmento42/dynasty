@@ -36,3 +36,32 @@ Apply `agios:blocked` label. Move to the next issue.
 - Frontend: `frontend/` — React, Vite
 - Verification: `flake8 backend/ --max-line-length=120` and `cd frontend && npm run build`
 - Scope: see `.agios/scope.json`
+
+## Claiming an issue
+
+When you start work on an issue:
+1. Remove `agios:ready-for-codex`, apply `agios:in-progress`
+2. Post this comment on the issue:
+
+```
+[AGIOS CLAIMED]
+Issue body snapshot: <first 16 chars of sha256 of the issue body>
+Claimed at: <ISO timestamp>
+```
+
+3. Do not edit the issue body after claiming. Put clarifications in comments only. If requirements change significantly, leave the issue, post a comment explaining, remove `agios:in-progress`, re-apply `agios:ready-for-codex`.
+
+When opening a PR:
+- Remove `agios:in-progress` label
+- Include in the PR body under `## Verification`:
+  - `Issue body snapshot at claim: <same hash>`
+
+If blocked mid-implementation:
+- Remove `agios:in-progress`, apply `agios:blocked`
+- Post comment:
+
+```
+[AGIOS BLOCKED]
+Reason: <scope-conflict | ci-failing | ambiguous-issue | human-decision-required>
+Required action: <specific thing needed to unblock>
+```
