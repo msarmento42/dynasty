@@ -13,6 +13,7 @@ from backend.database import DB_PATH
 from backend.scripts import daily_sync
 from backend.services.fantasy_engine import LEAGUE_CONFIG, enrich_player, pick_value
 from backend.services.proposals import generate_proposals
+from backend.services.roster_grade import grade_roster
 
 router = APIRouter()
 
@@ -190,6 +191,65 @@ async def get_all_rosters(league_id: str):
 
     result.sort(key=lambda r: r["total_adjusted_value"], reverse=True)
     return result
+
+
+@router.get("/league/{league_id}/grades")
+async def get_roster_grades(league_id: str):
+    """Return roster grades for every team in a league."""
+    current_year = datetime.now(timezone.utc).year
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        league = await get_league_row(db, league_id)
+        my_roster_id = league["config"].get("my_roster_id", league["my_roster_id"])
+        n_teams = league.get("n_teams") or LEAGUE_CONFIG.get(league_id, {}).get("n_teams", 12)
+
+        async with db.execute(
+            "SELECT roster_id, owner_display_name, player_ids_json "
+            "FROM rosters WHERE league_id=? ORDER BY roster_id",
+            (league_id,),
+        ) as cur:
+            roster_rows = await cur.fetchall()
+
+        if not roster_rows:
+            raise HTTPException(status_code=404, detail="Rosters not found. Run daily sync first.")
+
+        picks_by_roster = {}
+        async with db.execute(
+            "SELECT season, round, original_owner_id, current_owner_id FROM picks WHERE league_id=?",
+            (league_id,),
+        ) as cur:
+            pick_rows = await cur.fetchall()
+
+        for season, round_number, original_owner_id, current_owner_id in pick_rows:
+            owner_id = current_owner_id or original_owner_id
+            years_away = int(season or current_year) - current_year
+            value = pick_value(int(round_number or 0), years_away, int(n_teams or 12))
+            picks_by_roster.setdefault(owner_id, []).append({
+                "season": season,
+                "round": round_number,
+                "original_owner_id": original_owner_id,
+                "current_owner_id": current_owner_id,
+                "value": value,
+            })
+
+        grades = []
+        for roster_id, owner, player_ids_json in roster_rows:
+            player_ids = json.loads(player_ids_json or "[]")
+            players = await get_players_for_ids(db, player_ids, league_id)
+            picks = picks_by_roster.get(roster_id, [])
+            grade = grade_roster(players, picks, league_id)
+            grades.append({
+                "league_id": league_id,
+                "roster_id": roster_id,
+                "owner": owner or f"Team {roster_id}",
+                "is_mine": roster_id == my_roster_id,
+                "player_count": len(players),
+                "pick_count": len(picks),
+                **grade,
+            })
+
+    grades.sort(key=lambda item: item["score"], reverse=True)
+    return grades
 
 
 @router.post("/trade/evaluate")
