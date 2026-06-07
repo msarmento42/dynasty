@@ -1,8 +1,8 @@
-"""Fantasy value engine — league-adjusted player values, pick valuation, daily sync."""
+"""Fantasy value engine - league-adjusted player values, pick valuation, daily sync."""
 
 import math
 
-# ── League configs ─────────────────────────────────────────────────────────
+# -- League configs ---------------------------------------------------------
 
 LEAGUE_CONFIG = {
     "1330499939976880128": {
@@ -31,7 +31,7 @@ LEAGUE_CONFIG = {
     },
 }
 
-# ── Career stage curves ─────────────────────────────────────────────────────
+# -- Career stage curves ----------------------------------------------------
 
 AGE_CURVES = {
     "QB": {"rising": (0, 27), "prime": (27, 31), "declining": (31, 99)},
@@ -59,7 +59,7 @@ def years_in_prime_remaining(position: str, age: float) -> float:
     return max(0.0, round(remaining, 1))
 
 
-# ── Value adjustments ───────────────────────────────────────────────────────
+# -- Value adjustments ------------------------------------------------------
 
 def adjusted_value(base_value: int, position: str, league_id: str) -> int:
     """Apply league-specific adjustments to a raw FantasyCalc value."""
@@ -80,7 +80,34 @@ def adjusted_value(base_value: int, position: str, league_id: str) -> int:
     return int(value)
 
 
-# ── Pick valuation ──────────────────────────────────────────────────────────
+def qb_premium(player: dict, league_id: str):
+    """Return QB value inflation details for Four Horsemen 4QB leagues."""
+    config = LEAGUE_CONFIG.get(league_id, {})
+    if config.get("base_format") != "4qb" or player.get("position") != "QB":
+        return None
+
+    value_sf = float(player.get("value_sf") or 0)
+    value_1qb = float(player.get("value_1qb") or 0)
+    if value_1qb <= 0:
+        return None
+
+    multiplier = round(value_sf / value_1qb, 2)
+    if multiplier > 1.8:
+        label = "4QB Target"
+    elif multiplier < 1.2:
+        label = "Format Neutral"
+    else:
+        label = "Overvalued in 4QB"
+
+    return {
+        "value_sf": int(value_sf),
+        "value_1qb": int(value_1qb),
+        "premium_multiplier": multiplier,
+        "label": label,
+    }
+
+
+# -- Pick valuation ---------------------------------------------------------
 
 def pick_value(round: int, years_away: int, n_teams: int) -> int:
     """
@@ -94,7 +121,7 @@ def pick_value(round: int, years_away: int, n_teams: int) -> int:
     return int(base * year_discount * scarcity)
 
 
-# ── Player enrichment ───────────────────────────────────────────────────────
+# -- Player enrichment ------------------------------------------------------
 
 def enrich_player(player: dict, league_id: str) -> dict:
     """
@@ -116,5 +143,9 @@ def enrich_player(player: dict, league_id: str) -> dict:
     enriched["career_stage"] = classify_career_stage(position, age) if age > 0 else "unknown"
     enriched["years_in_prime_remaining"] = years_in_prime_remaining(position, age) if age > 0 else 0.0
     enriched["trajectory"] = "+" if trend > 100 else ("-" if trend < -100 else "=")
+
+    premium = qb_premium(enriched, league_id)
+    if premium:
+        enriched["qb_premium"] = premium
 
     return enriched

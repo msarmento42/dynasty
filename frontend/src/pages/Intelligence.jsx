@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
 import DivergenceCard from '../components/DivergenceCard.jsx';
+import QBPremiumCard from '../components/QBPremiumCard.jsx';
 
 const KTC_RANKINGS_URL = 'https://keeptradecut.com/api/rankings?format=superflex&numQBs=1';
+const FOUR_HORSEMEN_LEAGUE_IDS = new Set(['1315139749693886464', '1312285408079380481']);
 
 const SEVERITY_GROUPS = [
   { key: 'critical', label: 'Critical', color: '#b42318', badge: 'CRITICAL' },
@@ -138,6 +140,33 @@ function positionBadge(position, team) {
 function trendText(value) {
   const trend = Number(value || 0);
   return trend > 0 ? `+${trend}` : String(trend);
+}
+
+function buildQbPremium(player) {
+  if (player.qb_premium) {
+    return player.qb_premium;
+  }
+
+  const valueSf = Number(player.value_sf || 0);
+  const value1qb = Number(player.value_1qb || 0);
+  if (String(player.position || '').toUpperCase() !== 'QB' || value1qb <= 0) {
+    return null;
+  }
+
+  const premiumMultiplier = Number((valueSf / value1qb).toFixed(2));
+  let label = 'Overvalued in 4QB';
+  if (premiumMultiplier > 1.8) {
+    label = '4QB Target';
+  } else if (premiumMultiplier < 1.2) {
+    label = 'Format Neutral';
+  }
+
+  return {
+    value_sf: valueSf,
+    value_1qb: value1qb,
+    premium_multiplier: premiumMultiplier,
+    label,
+  };
 }
 
 function PlayerInitials({ name }) {
@@ -351,6 +380,56 @@ function KtcDivergenceSection({ divergences, status }) {
   );
 }
 
+function QBPremiumSection({ players }) {
+  const { targets, overvalued } = useMemo(() => {
+    const premiumQbs = players
+      .filter((player) => String(player.position || '').toUpperCase() === 'QB')
+      .map((player) => ({ ...player, qb_premium: buildQbPremium(player) }))
+      .filter((player) => player.qb_premium);
+
+    return {
+      targets: premiumQbs
+        .filter((player) => player.qb_premium.label === '4QB Target')
+        .sort((a, b) => b.qb_premium.premium_multiplier - a.qb_premium.premium_multiplier)
+        .slice(0, 5),
+      overvalued: premiumQbs
+        .filter((player) => player.qb_premium.label === 'Overvalued in 4QB')
+        .sort((a, b) => a.qb_premium.premium_multiplier - b.qb_premium.premium_multiplier)
+        .slice(0, 3),
+    };
+  }, [players]);
+
+  if (targets.length === 0 && overvalued.length === 0) {
+    return <p style={{ color: '#667085', margin: 0 }}>No QB premium signals for this roster</p>;
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 16 }}>
+      {targets.length > 0 && (
+        <section style={{ display: 'grid', gap: 10 }}>
+          <h3 style={{ color: '#166534', margin: 0 }}>4QB Targets</h3>
+          <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+            {targets.map((player) => (
+              <QBPremiumCard key={`target-${player.sleeper_id}`} player={player} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {overvalued.length > 0 && (
+        <section style={{ display: 'grid', gap: 10 }}>
+          <h3 style={{ color: '#92400e', margin: 0 }}>Overvalued QBs</h3>
+          <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+            {overvalued.map((player) => (
+              <QBPremiumCard key={`overvalued-${player.sleeper_id}`} player={player} />
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
 export default function Intelligence() {
   const [selectedLeague, setSelectedLeague] = useState('');
   const [alerts, setAlerts] = useState([]);
@@ -414,6 +493,8 @@ export default function Intelligence() {
     }
   }, []);
 
+  const isFourHorsemenLeague = FOUR_HORSEMEN_LEAGUE_IDS.has(selectedLeague);
+
   return (
     <main style={{ background: '#f6f7fb', minHeight: '100vh', padding: 24 }}>
       <section style={{ display: 'grid', gap: 22, margin: '0 auto', maxWidth: 1120 }}>
@@ -446,6 +527,13 @@ export default function Intelligence() {
               <h2 style={{ margin: 0 }}>KTC Divergence</h2>
               <KtcDivergenceSection divergences={ktcDivergences} status={ktcStatus} />
             </section>
+
+            {isFourHorsemenLeague && (
+              <section style={{ display: 'grid', gap: 12 }}>
+                <h2 style={{ margin: 0 }}>4QB Premium</h2>
+                <QBPremiumSection players={rosterPlayers} />
+              </section>
+            )}
 
             <section style={{ display: 'grid', gap: 12 }}>
               <h2 style={{ margin: 0 }}>Value Movers</h2>
