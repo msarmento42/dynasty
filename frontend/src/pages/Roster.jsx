@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
+import AgeCurveChart from '../components/AgeCurveChart.jsx';
 import LeagueSelector from '../components/LeagueSelector.jsx';
 import PlayerCard from '../components/PlayerCard.jsx';
 import RosterGrade from '../components/RosterGrade.jsx';
@@ -115,6 +116,23 @@ export default function Roster() {
                 </section>
               );
             })}
+
+            <details
+              open
+              style={{
+                background: '#ffffff',
+                border: '1px solid #d9dee7',
+                borderRadius: 8,
+                padding: 18,
+              }}
+            >
+              <summary style={{ cursor: 'pointer', fontSize: 18, fontWeight: 800 }}>
+                Age Profile
+              </summary>
+              <div style={{ marginTop: 16 }}>
+                <AgeCurveChart players={rosterData.players || []} />
+              </div>
+            </details>
 
             <footer style={{ color: '#475467', fontWeight: 700 }}>
               Total roster value: {Number(rosterData.total_adjusted_value || 0).toLocaleString()}
