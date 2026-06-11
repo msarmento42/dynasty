@@ -4,6 +4,13 @@ on:
   schedule:
     - cron: '0 */4 * * *'   # every 4 hours
   workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - '.github/workflows/queue-health.yml'
+      - '.github/scripts/**'
 
 permissions:
   contents: read
@@ -16,57 +23,8 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - name: Audit ready issues
-        run: |
-          REPO="${{ github.repository }}"
-          echo "## AGIOS Queue Health — $REPO" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          ISSUES=$(gh issue list \
-            --repo "$REPO" \
-            --label "agios:ready-for-codex" \
-            --state open \
-            --json number,title,body,labels \
-            --limit 50)
-
-          TOTAL=$(echo "$ISSUES" | jq 'length')
-          echo "**Ready issues:** $TOTAL" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          PROBLEMS=0
-
-          # Check each issue for required fields and open PRs
-          echo "$ISSUES" | jq -r '.[] | "\(.number)|\(.title)|\(.body)"' | while IFS='|' read -r NUM TITLE BODY; do
-            ISSUE_PROBLEMS=""
-
-            # Check required fields
-            for FIELD in "Allowed paths:" "Blocked paths:" "Verification command:" "Acceptance criteria:" "Risk level:" "Auto-merge allowed:" "Rollback plan:"; do
-              if ! echo "$BODY" | grep -q "$FIELD"; then
-                ISSUE_PROBLEMS="$ISSUE_PROBLEMS missing-field:$(echo $FIELD | tr -d ':')"
-              fi
-            done
-
-            # Check if already has an open PR
-            PR=$(gh pr list --repo "$REPO" --state open --search "closes #$NUM" --json number --jq '.[0].number // empty' 2>/dev/null)
-            if [ -n "$PR" ]; then
-              ISSUE_PROBLEMS="$ISSUE_PROBLEMS has-open-pr:#$PR"
-              gh issue edit "$NUM" --repo "$REPO" --remove-label "agios:ready-for-codex" 2>/dev/null || true
-              gh issue edit "$NUM" --repo "$REPO" --add-label "agios:needs-review" 2>/dev/null || true
-            fi
-
-            if [ -n "$ISSUE_PROBLEMS" ]; then
-              echo "WARNING **#$NUM $TITLE** — $ISSUE_PROBLEMS" >> $GITHUB_STEP_SUMMARY
-              if echo "$ISSUE_PROBLEMS" | grep -q "missing-field"; then
-                gh issue edit "$NUM" --repo "$REPO" --add-label "agios:needs-scope" 2>/dev/null || true
-              fi
-              PROBLEMS=$((PROBLEMS + 1))
-            else
-              echo "OK #$NUM $TITLE" >> $GITHUB_STEP_SUMMARY
-            fi
-          done
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "_Queue audit complete. Codex heartbeat handles execution._" >> $GITHUB_STEP_SUMMARY
+      - name: Check out repository
+        uses: actions/checkout@v4
 
       - name: Validate issue schemas
         env:
