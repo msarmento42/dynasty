@@ -3,10 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 try:
     from backend.database import init_db
-    from backend.routers import fantasy
+    from backend.routers import fantasy, sync
 except ModuleNotFoundError:
     from database import init_db
-    from routers import fantasy
+    from routers import fantasy, sync
 
 app = FastAPI(title="Dynasty Calculator")
 
@@ -18,6 +18,7 @@ app.add_middleware(
 )
 
 app.include_router(fantasy.router, prefix="/fantasy")
+app.include_router(sync.router, prefix="/fantasy")
 
 
 @app.on_event("startup")

@@ -1,50 +1,83 @@
 # Dynasty Calculator
 
-A world-class dynasty fantasy football tool personalized to your exact leagues.
+A local-first dynasty fantasy football tool personalized to Marcus's leagues.
 
 ## What this replaces
 
-KTC + FantasyCalc + FantasyPros — but tuned to your specific league settings, scoring, 
-roster construction, and historical trade data.
+KTC + FantasyCalc + FantasyPros, but tuned to specific league settings, roster construction, and historical trade behavior.
 
 ## Stack
 
-FastAPI + React/Vite + SQLite (same as Life OS)
+FastAPI + React/Vite + SQLite.
 
-## Development
+## Local setup
 
-Run both local servers with:
+The app is designed to run locally first. Sleeper and FantasyCalc data comes from public APIs, so no `.env` file is required for the current MVP workflow.
+
+1. Install backend dependencies:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+2. Install frontend dependencies:
+
+```bash
+cd frontend
+npm install
+cd ..
+```
+
+3. Seed or refresh the local fantasy database:
+
+```bash
+python3 -m backend.scripts.daily_sync
+```
+
+4. Run the app:
 
 ```bash
 ./start.sh
 ```
 
-The startup script runs the FastAPI backend on port `8001` and starts the Vite frontend. The frontend proxy reads `VITE_API_PORT` with an `8001` fallback, so you can target a different backend port with:
+Open the frontend at `http://localhost:5173`. The backend runs on `http://localhost:8001` by default.
+
+## Local data controls
+
+The app shell includes a Local Data panel that checks the SQLite database, shows row counts for the core tables, and can run a manual sync from the browser.
+
+Useful local endpoints:
 
 ```bash
-VITE_API_PORT=9000 npm run dev
+curl http://localhost:8001/health
+curl http://localhost:8001/fantasy/sync-status
+curl -X POST http://localhost:8001/fantasy/sync
 ```
+
+The startup script reads `API_PORT` for the backend port and passes it through to Vite as `VITE_API_PORT`:
+
+```bash
+API_PORT=9000 ./start.sh
+```
+
+## Current MVP focus
+
+The near-term product order is:
+
+1. Trade finder and decision support
+2. League power rankings
+3. Roster strength and portfolio view
+4. Rookie player research
 
 ## Data sources
 
-- **Sleeper API** — leagues, rosters, injuries, depth charts, trending
-- **FantasyCalc API** — dynasty values, 30-day trends
-- **ESPN unofficial API** — player news, projections
-- **KeepTradeCut** — second-opinion values (Phase 7)
+- **Sleeper API** - leagues, rosters, picks, transactions, trending players
+- **FantasyCalc API** - dynasty values and rookie rankings
+- **ESPN unofficial API** - player news and projections when enabled
+- **KeepTradeCut** - second-opinion values in a later phase
 
 ## Build plan
 
-See `dynasty_calculator_scope.md` for the full 8-phase build plan.
-
-## Phases
-
-| Phase | Description |
-|-------|-------------|
-| 1 | Value engine — league-adjusted player values |
-| 2 | Trade evaluator UI |
-| 3 | Trade proposal engine |
-| 4 | Market calibration (learn your leagues' actual prices) |
-| 5 | FantasyPros intelligence layer |
-| 6 | Scheduled task system (daily digest, weekly dynasty report) |
-| 7 | KTC second-opinion rankings |
-| 8 | Manager tendency model |
+See `dynasty_calculator_scope.md` for the full build plan.
