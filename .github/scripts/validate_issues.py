@@ -17,7 +17,7 @@ REQUIRED_FIELDS = [
     ("Blocked paths",         r"\*\*Blocked paths:\*\*"),
     ("Implementation instructions", r"\*\*Implementation instructions:\*\*"),
     ("Acceptance criteria",   r"- \[ \]"),
-    ("Verification command",  r"```"),
+    ("Verification command",  r"\*\*Verification command:\*\*\s*```(?:bash|shell|sh)?\s*\n\s*\S[\s\S]*?\n```"),
     ("Rollback plan",         r"\*\*Rollback plan:\*\*\s*(.+)"),
     ("Risk level",            r"\*\*Risk level:\*\*\s*(LOW|MEDIUM|HIGH)"),
     ("Auto-merge allowed",    r"\*\*Auto-merge allowed:\*\*\s*(yes|no)"),
@@ -106,13 +106,13 @@ def main():
         title = issue["title"]
         problems = validate(issue)
         if problems:
-            print(f"  ⚠ #{num} {title} — {len(problems)} problem(s)")
+            print(f"  WARNING #{num} {title} — {len(problems)} problem(s)")
             for p in problems:
                 print(f"      {p}")
             flag_issue(num, problems)
             flagged += 1
         else:
-            print(f"  ✓ #{num} {title}")
+            print(f"  OK #{num} {title}")
 
     print(f"\nValidation complete: {flagged}/{len(issues)} issue(s) flagged")
 
