@@ -5,6 +5,11 @@ on:
     - cron: '0 */4 * * *'   # every 4 hours
   workflow_dispatch:
 
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
 jobs:
   audit:
     runs-on: ubuntu-latest
@@ -45,20 +50,18 @@ jobs:
             PR=$(gh pr list --repo "$REPO" --state open --search "closes #$NUM" --json number --jq '.[0].number // empty' 2>/dev/null)
             if [ -n "$PR" ]; then
               ISSUE_PROBLEMS="$ISSUE_PROBLEMS has-open-pr:#$PR"
-              # Remove ready-for-codex label if PR is open
               gh issue edit "$NUM" --repo "$REPO" --remove-label "agios:ready-for-codex" 2>/dev/null || true
               gh issue edit "$NUM" --repo "$REPO" --add-label "agios:needs-review" 2>/dev/null || true
             fi
 
             if [ -n "$ISSUE_PROBLEMS" ]; then
-              echo "⚠️ **#$NUM $TITLE** — $ISSUE_PROBLEMS" >> $GITHUB_STEP_SUMMARY
-              # Apply needs-scope label for missing fields
+              echo "WARNING **#$NUM $TITLE** — $ISSUE_PROBLEMS" >> $GITHUB_STEP_SUMMARY
               if echo "$ISSUE_PROBLEMS" | grep -q "missing-field"; then
                 gh issue edit "$NUM" --repo "$REPO" --add-label "agios:needs-scope" 2>/dev/null || true
               fi
               PROBLEMS=$((PROBLEMS + 1))
             else
-              echo "✅ #$NUM $TITLE" >> $GITHUB_STEP_SUMMARY
+              echo "OK #$NUM $TITLE" >> $GITHUB_STEP_SUMMARY
             fi
           done
 
