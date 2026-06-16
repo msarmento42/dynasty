@@ -8,6 +8,7 @@ import PowerRankings from './pages/PowerRankings.jsx';
 import Portfolio from './pages/Portfolio.jsx';
 import Rookies from './pages/Rookies.jsx';
 import SyncStatus from './components/SyncStatus.jsx';
+import TradeHistory from './pages/TradeHistory.jsx';
 import './App.css';
 
 const NAV_ITEMS = [
@@ -17,6 +18,7 @@ const NAV_ITEMS = [
   { to: '/power-rankings', label: 'Power Rankings' },
   { to: '/portfolio', label: 'Roster Strength' },
   { to: '/rookies', label: 'Rookies' },
+  { to: '/trade-history', label: 'Trade History' },
   { to: '/intelligence', label: 'Research' },
 ];
 
@@ -88,6 +90,7 @@ function AppShell() {
             <Route path="/power-rankings" element={<PowerRankings />} />
             <Route path="/portfolio" element={<Portfolio />} />
             <Route path="/rookies" element={<Rookies />} />
+            <Route path="/trade-history" element={<TradeHistory />} />
           </Routes>
         </main>
       </div>
