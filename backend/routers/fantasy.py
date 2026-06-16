@@ -766,3 +766,99 @@ async def get_picks(league_id: str, my_roster_id: Optional[int] = None):
         }
         for r in rows
     ]
+
+
+@router.get("/league/{league_id}/trade-history")
+async def get_trade_history(league_id: str, limit: int = 50):
+    """Return chronological trade history for a league with player names resolved."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await get_league_row(db, league_id)
+
+        # Build roster_id → owner name map
+        async with db.execute(
+            "SELECT roster_id, owner_display_name FROM rosters WHERE league_id = ?",
+            (league_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+        roster_owners = {row[0]: (row[1] or f"Team {row[0]}") for row in rows}
+
+        # Fetch trades newest-first
+        async with db.execute(
+            """SELECT transaction_id, week, season,
+                      side_a_roster_id, side_b_roster_id,
+                      side_a_player_ids_json, side_b_player_ids_json,
+                      side_a_pick_ids_json, side_b_pick_ids_json,
+                      side_a_total_value, side_b_total_value, created_at
+               FROM trade_history
+               WHERE league_id = ?
+               ORDER BY created_at DESC
+               LIMIT ?""",
+            (league_id, limit),
+        ) as cur:
+            trades = await cur.fetchall()
+
+        async def resolve_players(player_ids: list) -> list:
+            result = []
+            for pid in player_ids:
+                async with db.execute(
+                    "SELECT name, position FROM players WHERE sleeper_id = ?",
+                    (str(pid),),
+                ) as c2:
+                    row = await c2.fetchone()
+                if row:
+                    result.append({"name": row[0], "position": row[1]})
+                else:
+                    result.append({"name": str(pid), "position": None})
+            return result
+
+        results = []
+        for t in trades:
+            (txn_id, week, season, a_rid, b_rid,
+             a_players_json, b_players_json,
+             a_picks_json, b_picks_json,
+             a_val, b_val, created_at) = t
+
+            a_player_ids = json.loads(a_players_json or "[]")
+            b_player_ids = json.loads(b_players_json or "[]")
+            a_picks = json.loads(a_picks_json or "[]")
+            b_picks = json.loads(b_picks_json or "[]")
+
+            a_players = await resolve_players(a_player_ids)
+            b_players = await resolve_players(b_player_ids)
+
+            a_val = a_val or 0
+            b_val = b_val or 0
+            delta = a_val - b_val
+            threshold = max(a_val, b_val, 1) * 0.10
+
+            if delta > threshold:
+                winner = "side_a"
+            elif delta < -threshold:
+                winner = "side_b"
+            else:
+                winner = "fair"
+
+            results.append({
+                "trade_id": txn_id,
+                "traded_at": created_at,
+                "week": week,
+                "season": season,
+                "side_a": {
+                    "owner": roster_owners.get(a_rid, f"Team {a_rid}"),
+                    "roster_id": a_rid,
+                    "players": a_players,
+                    "picks": a_picks,
+                    "total_value": a_val,
+                },
+                "side_b": {
+                    "owner": roster_owners.get(b_rid, f"Team {b_rid}"),
+                    "roster_id": b_rid,
+                    "players": b_players,
+                    "picks": b_picks,
+                    "total_value": b_val,
+                },
+                "value_delta": delta,
+                "winner": winner,
+            })
+
+    return {"league_id": league_id, "trades": results}
