@@ -51,7 +51,13 @@ function AppShell() {
           <p className="eyebrow">Local Dynasty Lab</p>
           <h1>Dynasty Calculator</h1>
         </div>
-        <button className="theme-toggle" type="button" onClick={toggleTheme}>
+        <button
+          className="theme-toggle"
+          type="button"
+          onClick={toggleTheme}
+          aria-pressed={isDark}
+          aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
           {isDark ? 'Light mode' : 'Dark mode'}
         </button>
       </header>
