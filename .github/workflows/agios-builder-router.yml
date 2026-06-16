@@ -1,0 +1,74 @@
+# AGIOS Builder Router caller — dynasty repo
+name: AGIOS Builder Router (caller)
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number: { required: true }
+      builder_order: { required: false, default: "" }
+  issues:
+    types: [labeled]
+jobs:
+  route:
+    if: >-
+      github.event_name != 'issues' ||
+      github.event.label.name == 'agios:ready-for-codex'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      models: read
+    concurrency:
+      group: agios-issue-${{ github.event.issue.number || inputs.issue_number }}
+      cancel-in-progress: false
+    steps:
+      - name: Resolve issue number
+        id: issue
+        run: |
+          if [ -n "${{ inputs.issue_number }}" ]; then
+            echo "number=${{ inputs.issue_number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Node.js (for frontend build verification)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+        with:
+          path: target
+          fetch-depth: 0
+
+      - name: Checkout AGIOS control repo
+        uses: actions/checkout@v4
+        with:
+          repository: msarmento42/agios-control
+          path: agios-control
+          fetch-depth: 1
+          token: ${{ secrets.AGIOS_CONTROL_TOKEN }}
+
+      - name: Install frontend dependencies (for build verification)
+        run: |
+          cd target/frontend && npm ci --prefer-offline 2>/dev/null || npm install
+
+      - name: Route builder
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          python agios-control/scripts/agios_builder_router.py \
+            --issue-number "${{ steps.issue.outputs.number }}" \
+            --repo "${{ github.repository }}" \
+            --repo-path target \
+            --control-path agios-control \
+            --policy-path builder-policy.json \
+            --builder-order "${{ inputs.builder_order || '' }}" \
+            --builder-timeout-seconds 120
