@@ -55,6 +55,11 @@ jobs:
         run: |
           cd target/frontend && npm ci --prefer-offline 2>/dev/null || npm install
 
+      - name: Clean dependency install artifacts
+        run: |
+          git -C target restore -- frontend/package.json 2>/dev/null || true
+          rm -f target/frontend/package-lock.json
+
       - name: Route builder
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
