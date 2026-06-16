@@ -1,8 +1,5 @@
 name: Auto-Merge on CI Pass
 
-# Triggers AFTER the CI workflow completes — this way we only merge
-# when lint + scope-check have actually passed. Works on private repos
-# without branch protection (no GitHub Pro required).
 on:
   workflow_run:
     workflows: ["CI"]
@@ -13,33 +10,59 @@ permissions:
   pull-requests: write
 
 jobs:
-  auto-merge:
-    name: Merge PR if CI passed
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+  policy-gate:
+    name: Policy-gated auto-merge
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
     steps:
-      - name: Find open PR for this commit
-        id: find-pr
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check gates and enable auto-merge
         run: |
-          SHA="${{ github.event.workflow_run.head_sha }}"
-          PR_NUMBER=$(gh api "repos/${{ github.repository }}/pulls?state=open&per_page=50" \
-            --jq ".[] | select(.head.sha == \"$SHA\") | .number" | head -1)
-          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
-          echo "Found PR: $PR_NUMBER for SHA $SHA"
+          # Get PR number from the workflow run
+          PR=$(gh api "repos/$REPO/actions/runs/$RUN_ID" \
+            --jq '.pull_requests[0].number // empty' 2>/dev/null)
 
-      - name: Squash merge
-        if: steps.find-pr.outputs.pr_number != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh pr merge "${{ steps.find-pr.outputs.pr_number }}" \
-            --repo "${{ github.repository }}" \
-            --squash \
-            --delete-branch
-          echo "Merged PR #${{ steps.find-pr.outputs.pr_number }}"
+          if [ -z "$PR" ]; then
+            echo "No PR associated with this run — skipping"
+            exit 0
+          fi
 
-      - name: No PR found
-        if: steps.find-pr.outputs.pr_number == ''
-        run: echo "No open PR found for SHA ${{ github.event.workflow_run.head_sha }} — skipping"
+          echo "Checking gates for PR #$PR..."
+
+          # Get PR body
+          PR_BODY=$(gh pr view "$PR" --repo "$REPO" --json body --jq '.body')
+
+          # Gate 1: PR body must contain Closes #N
+          if ! echo "$PR_BODY" | grep -qiE "closes?\s+#[0-9]+"; then
+            echo "SKIP: PR #$PR has no 'Closes #N' — auto-merge not enabled"
+            exit 0
+          fi
+
+          # Extract issue number
+          ISSUE=$(echo "$PR_BODY" | grep -ioE "closes?\s+#[0-9]+" | grep -oE "[0-9]+" | head -1)
+          echo "  Linked issue: #$ISSUE"
+
+          # Get issue body
+          ISSUE_BODY=$(gh issue view "$ISSUE" --repo "$REPO" --json body --jq '.body')
+
+          # Gate 2: issue must have Auto-merge allowed: yes
+          if ! echo "$ISSUE_BODY" | grep -qiE "\*\*Auto-merge allowed:\*\*\s*yes"; then
+            echo "SKIP: Issue #$ISSUE does not have 'Auto-merge allowed: yes'"
+            exit 0
+          fi
+
+          # Gate 3: issue must NOT have Risk level: HIGH
+          if echo "$ISSUE_BODY" | grep -qiE "\*\*Risk level:\*\*\s*HIGH"; then
+            echo "SKIP: Issue #$ISSUE has Risk level: HIGH — manual review required"
+            exit 0
+          fi
+
+          # All gates passed — enable auto-merge
+          echo "All gates passed — enabling auto-merge (squash) for PR #$PR"
+          gh pr merge "$PR" \
+            --repo "$REPO" \
+            --auto \
+            --squash
