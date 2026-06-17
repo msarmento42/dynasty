@@ -1,0 +1,25 @@
+/* Existing CSS content */
+
+/* Mobile responsive styles */
+@media (max-width: 640px) {
+  .top-nav {
+    display: none;
+  }
+  .hamburger-menu {
+    display: block;
+  }
+}
+
+.player-card {
+  display: grid;
+  grid-template-columns: auto-fill minmax(160px, 1fr);
+}
+
+.table-container {
+  overflow-x: auto;
+}
+
+.interactive-element {
+  min-width: 44px;
+  min-height: 44px;
+}
