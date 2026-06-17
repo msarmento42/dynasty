@@ -66,7 +66,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
-          CEREBRAS_MODEL: "llama3.3-70b"
+          CEREBRAS_MODEL: "llama3.1-8b"
           SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
@@ -80,4 +80,4 @@ jobs:
             --control-path agios-control \
             --policy-path builder-policy.json \
             --builder-order "${{ inputs.builder_order || '' }}" \
-            --builder-timeout-seconds 120
+            --builder-timeout-seconds 240
