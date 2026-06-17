@@ -740,6 +740,44 @@ async def get_manager_detail(league_id: str, roster_id: int):
     return payload
 
 
+
+
+@router.get("/breakout-candidates")
+async def get_breakout_candidates(league_id: str, limit: int = 10):
+    """Return rising players with below-elite value — buy-low opportunities."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Try career_stage column first; fall back to age-based proxy if column absent
+        try:
+            async with db.execute(
+                "SELECT sleeper_id, name, position, team, age, value_sf, value_1qb, trend_30d, injury_status "
+                "FROM players WHERE career_stage IN ('rising') AND trend_30d > 75 "
+                "AND value_sf > 0 AND value_sf < 5000 "
+                "ORDER BY trend_30d DESC LIMIT ?",
+                (limit,),
+            ) as cur:
+                rows = await cur.fetchall()
+        except Exception:
+            async with db.execute(
+                "SELECT sleeper_id, name, position, team, age, value_sf, value_1qb, trend_30d, injury_status "
+                "FROM players WHERE age <= 26 AND trend_30d > 75 "
+                "AND value_sf > 0 AND value_sf < 5000 "
+                "ORDER BY trend_30d DESC LIMIT ?",
+                (limit,),
+            ) as cur:
+                rows = await cur.fetchall()
+
+        candidates = []
+        for row in rows:
+            p = {
+                "sleeper_id": row[0], "name": row[1], "position": row[2],
+                "team": row[3], "age": row[4], "value_sf": row[5] or 0,
+                "value_1qb": row[6] or 0, "trend_30d": row[7] or 0,
+                "injury_status": row[8],
+            }
+            candidates.append(enrich_player(p, league_id))
+
+    return candidates
+
 @router.get("/sync")
 async def trigger_sync():
     """Trigger a manual sync in the background."""
