@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
 import DivergenceCard from '../components/DivergenceCard.jsx';
 import QBPremiumCard from '../components/QBPremiumCard.jsx';
+import BreakoutCard from '../components/BreakoutCard.jsx';
 
 const KTC_RANKINGS_URL = 'https://keeptradecut.com/api/rankings?format=superflex&numQBs=1';
 const FOUR_HORSEMEN_LEAGUE_IDS = new Set(['1315139749693886464', '1312285408079380481']);
@@ -439,6 +440,7 @@ export default function Intelligence() {
   const [ktcStatus, setKtcStatus] = useState('idle');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [breakoutCandidates, setBreakoutCandidates] = useState([]);
 
   const loadIntelligence = useCallback(async (leagueId) => {
     setSelectedLeague(leagueId);
@@ -446,12 +448,14 @@ export default function Intelligence() {
     setError('');
     setKtcDivergences([]);
     setKtcStatus('idle');
+    setBreakoutCandidates([]);
 
     try {
-      const [alertsResponse, newsResponse, rosterResponse] = await Promise.all([
+      const [alertsResponse, newsResponse, rosterResponse, breakoutResponse] = await Promise.all([
         fetch(`/fantasy/alerts/${leagueId}`),
         fetch('/fantasy/news'),
         fetch(`/fantasy/league/${leagueId}/roster`),
+        fetch(`/fantasy/breakout-candidates?league_id=${leagueId}&limit=10`),
       ]);
 
       if (!alertsResponse.ok) {
@@ -461,16 +465,18 @@ export default function Intelligence() {
         throw new Error('Unable to load roster movers');
       }
 
-      const [alertsData, newsData, rosterData] = await Promise.all([
+      const [alertsData, newsData, rosterData, breakoutData] = await Promise.all([
         alertsResponse.json(),
         optionalJson(newsResponse),
         rosterResponse.json(),
+        optionalJson(breakoutResponse),
       ]);
       const players = Array.isArray(rosterData.players) ? rosterData.players : [];
 
       setAlerts(Array.isArray(alertsData) ? alertsData : []);
       setNewsItems(newsData);
       setRosterPlayers(players);
+      setBreakoutCandidates(breakoutData);
       setKtcStatus('loading');
 
       try {
@@ -486,6 +492,7 @@ export default function Intelligence() {
       setNewsItems([]);
       setRosterPlayers([]);
       setKtcDivergences([]);
+      setBreakoutCandidates([]);
       setKtcStatus('idle');
       setError(err.message);
     } finally {
@@ -532,6 +539,20 @@ export default function Intelligence() {
               <section style={{ display: 'grid', gap: 12 }}>
                 <h2 style={{ margin: 0 }}>4QB Premium</h2>
                 <QBPremiumSection players={rosterPlayers} />
+              </section>
+            )}
+
+            {breakoutCandidates.length > 0 && (
+              <section style={{ display: 'grid', gap: 12 }}>
+                <h2 style={{ margin: 0 }}>Breakout Candidates</h2>
+                <p style={{ color: '#667085', fontSize: 13, margin: 0 }}>
+                  Rising players with below-market value — buy-low targets.
+                </p>
+                <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
+                  {breakoutCandidates.map((p) => (
+                    <BreakoutCard key={p.sleeper_id} player={p} />
+                  ))}
+                </div>
               </section>
             )}
 
