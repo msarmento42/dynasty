@@ -38,3 +38,23 @@ At each wake-up:
 - Scope check validates PR body and changed files against the linked issue.
 - Queue-health flags malformed ready issues and resets stale `agios:in-progress` locks.
 - Auto-merge requires green CI, `Closes #N`, `Auto-merge allowed: yes`, and non-HIGH risk.
+## Escalation Tier
+
+In addition to the normal `agios:ready-for-codex` queue, you handle a **premium escalation queue** for issues that exceeded the free builder output cap.
+
+**Trigger label:** `agios:escalate-codex`
+
+These issues were attempted by the free builder chain (Gemini → GitHub Models → Cerebras → SambaNova → Cloudflare 70B) but could not be completed because existing files totalled more than 5,000 characters — beyond the output limit of free models. You have no such constraint.
+
+**Handling escalated issues:**
+1. Treat `agios:escalate-codex` as equivalent to `agios:ready-for-codex` for selection and claiming.
+2. Read the issue body carefully — it will follow the standard AGIOS contract.
+3. Implement in full. The issue was escalated specifically because the files are large; do not truncate or simplify.
+4. Open a PR with `Closes #<issue-number>` as usual.
+5. On completion: remove `agios:escalate-codex`, add `agios:done`.
+6. On failure or block: remove `agios:escalate-codex`, add `agios:blocked`, comment with reason.
+
+**Priority:** Handle `agios:escalate-codex` issues before `agios:ready-for-codex` issues in the same repo.
+
+**If you cannot resolve:** Remove `agios:escalate-codex`, add `agios:escalate-claude`. The system will pick it up in the Claude escalation tier.
+
