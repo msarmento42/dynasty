@@ -1,0 +1,10 @@
+node_modules
+__pycache__
+.env
+*.pyc
+*.pyo
+frontend/.vite
+frontend/node_modules
+backend/fantasy.db
+.git
+*.md

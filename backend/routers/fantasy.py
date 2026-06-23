@@ -12,9 +12,7 @@ from pydantic import BaseModel
 from backend.database import DB_PATH
 from backend.scripts import daily_sync
 from backend.services.fantasy_engine import LEAGUE_CONFIG, enrich_player, pick_value
-from backend.services.fantasycalc import fetch_rookie_rankings
 from backend.services.proposals import generate_proposals
-from backend.services.roster_grade import grade_roster
 
 router = APIRouter()
 
@@ -130,38 +128,6 @@ async def get_leagues():
     ]
 
 
-@router.get("/rookies")
-async def get_rookies(num_qbs: int = 2):
-    """Return rookie-only dynasty rankings enriched with career context."""
-    if num_qbs not in (1, 2):
-        raise HTTPException(status_code=400, detail="num_qbs must be 1 or 2.")
-
-    raw_players = await fetch_rookie_rankings(num_qbs=num_qbs)
-    league_id = "1330499939976880128"
-    enriched = []
-    for player in raw_players:
-        value = player.get("value", 0)
-        normalized = {
-            "sleeper_id": player.get("sleeper_id"),
-            "name": player.get("name"),
-            "position": player.get("position"),
-            "team": player.get("team"),
-            "age": player.get("age"),
-            "value_sf": value,
-            "value_1qb": value,
-            "trend_30d": player.get("trend_30d", 0),
-            "rank": player.get("rank", 0),
-            "pos_rank": player.get("pos_rank", 0),
-        }
-        enriched.append(enrich_player(normalized, league_id))
-
-    enriched.sort(key=lambda player: player.get("adjusted_value", 0), reverse=True)
-    for index, player in enumerate(enriched, start=1):
-        player["rookie_rank"] = index
-        player["format"] = "SF" if num_qbs == 2 else "1QB"
-    return enriched
-
-
 @router.get("/league/{league_id}/roster")
 async def get_my_roster(league_id: str):
     """Return my enriched roster for a league."""
@@ -224,227 +190,6 @@ async def get_all_rosters(league_id: str):
 
     result.sort(key=lambda r: r["total_adjusted_value"], reverse=True)
     return result
-
-
-@router.get("/league/{league_id}/grades")
-async def get_roster_grades(league_id: str):
-    """Return roster grades for every team in a league."""
-    current_year = datetime.now(timezone.utc).year
-
-    async with aiosqlite.connect(DB_PATH) as db:
-        league = await get_league_row(db, league_id)
-        my_roster_id = league["config"].get("my_roster_id", league["my_roster_id"])
-        n_teams = league.get("n_teams") or LEAGUE_CONFIG.get(league_id, {}).get("n_teams", 12)
-
-        async with db.execute(
-            "SELECT roster_id, owner_display_name, player_ids_json "
-            "FROM rosters WHERE league_id=? ORDER BY roster_id",
-            (league_id,),
-        ) as cur:
-            roster_rows = await cur.fetchall()
-
-        if not roster_rows:
-            raise HTTPException(status_code=404, detail="Rosters not found. Run daily sync first.")
-
-        picks_by_roster = {}
-        async with db.execute(
-            "SELECT season, round, original_owner_id, current_owner_id FROM picks WHERE league_id=?",
-            (league_id,),
-        ) as cur:
-            pick_rows = await cur.fetchall()
-
-        for season, round_number, original_owner_id, current_owner_id in pick_rows:
-            owner_id = current_owner_id or original_owner_id
-            years_away = int(season or current_year) - current_year
-            value = pick_value(int(round_number or 0), years_away, int(n_teams or 12))
-            picks_by_roster.setdefault(owner_id, []).append({
-                "season": season,
-                "round": round_number,
-                "original_owner_id": original_owner_id,
-                "current_owner_id": current_owner_id,
-                "value": value,
-            })
-
-        grades = []
-        for roster_id, owner, player_ids_json in roster_rows:
-            player_ids = json.loads(player_ids_json or "[]")
-            players = await get_players_for_ids(db, player_ids, league_id)
-            picks = picks_by_roster.get(roster_id, [])
-            grade = grade_roster(players, picks, league_id)
-            grades.append({
-                "league_id": league_id,
-                "roster_id": roster_id,
-                "owner": owner or f"Team {roster_id}",
-                "is_mine": roster_id == my_roster_id,
-                "player_count": len(players),
-                "pick_count": len(picks),
-                **grade,
-            })
-
-    grades.sort(key=lambda item: item["score"], reverse=True)
-    return grades
-
-
-@router.get("/league/{league_id}/power-rankings")
-async def get_power_rankings(league_id: str):
-    """Rank every team by player value plus current pick capital."""
-    current_year = datetime.now(timezone.utc).year
-
-    async with aiosqlite.connect(DB_PATH) as db:
-        league = await get_league_row(db, league_id)
-        my_roster_id = league["config"].get("my_roster_id", league["my_roster_id"])
-        n_teams = league.get("n_teams") or LEAGUE_CONFIG.get(league_id, {}).get("n_teams", 12)
-
-        async with db.execute(
-            "SELECT roster_id, owner_display_name, player_ids_json "
-            "FROM rosters WHERE league_id=? ORDER BY roster_id",
-            (league_id,),
-        ) as cur:
-            roster_rows = await cur.fetchall()
-
-        if not roster_rows:
-            raise HTTPException(status_code=404, detail="Rosters not found. Run daily sync first.")
-
-        picks_by_roster = {}
-        async with db.execute(
-            "SELECT season, round, original_owner_id, current_owner_id FROM picks WHERE league_id=?",
-            (league_id,),
-        ) as cur:
-            pick_rows = await cur.fetchall()
-
-        for season, round_number, original_owner_id, current_owner_id in pick_rows:
-            owner_id = current_owner_id or original_owner_id
-            years_away = int(season or current_year) - current_year
-            value = pick_value(int(round_number or 0), years_away, int(n_teams or 12))
-            picks_by_roster.setdefault(owner_id, []).append(value)
-
-        rankings = []
-        for roster_id, owner, player_ids_json in roster_rows:
-            player_ids = json.loads(player_ids_json or "[]")
-            players = await get_players_for_ids(db, player_ids, league_id)
-            players.sort(key=lambda player: player.get("adjusted_value", 0), reverse=True)
-
-            player_value = sum(player.get("adjusted_value", 0) for player in players)
-            starter_value = sum(player.get("adjusted_value", 0) for player in players[:15])
-            bench_value = player_value - starter_value
-            pick_value_total = sum(picks_by_roster.get(roster_id, []))
-            total_value = player_value + pick_value_total
-
-            rankings.append({
-                "league_id": league_id,
-                "roster_id": roster_id,
-                "owner_display_name": owner or f"Team {roster_id}",
-                "is_mine": roster_id == my_roster_id,
-                "total_value": total_value,
-                "starter_value": starter_value,
-                "bench_value": bench_value,
-                "pick_value": pick_value_total,
-                "player_count": len(players),
-                "pick_count": len(picks_by_roster.get(roster_id, [])),
-            })
-
-    rankings.sort(key=lambda team: team["total_value"], reverse=True)
-    leader_value = rankings[0]["total_value"] if rankings else 0
-    for index, team in enumerate(rankings, start=1):
-        team["rank"] = index
-        team["delta_from_1"] = team["total_value"] - leader_value
-
-    return rankings
-
-
-@router.get("/portfolio")
-async def get_portfolio():
-    """Return the configured user's roster portfolio across every synced league."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            "SELECT league_id, name, n_teams, format, my_roster_id, config_json "
-            "FROM leagues ORDER BY name"
-        ) as cur:
-            league_rows = await cur.fetchall()
-
-        if not league_rows:
-            raise HTTPException(status_code=404, detail="Leagues not found. Run daily sync first.")
-
-        leagues = []
-        player_ownership = {}
-        positional_breakdown = {}
-        total_adjusted_value = 0
-
-        for league_row in league_rows:
-            league_id = league_row[0]
-            league_config = json.loads(league_row[5] or "{}")
-            my_roster_id = league_config.get("my_roster_id", league_row[4])
-
-            async with db.execute(
-                "SELECT player_ids_json FROM rosters WHERE league_id=? AND roster_id=?",
-                (league_id, my_roster_id),
-            ) as cur:
-                roster_row = await cur.fetchone()
-
-            player_ids = json.loads((roster_row[0] if roster_row else None) or "[]")
-            players = await get_players_for_ids(db, player_ids, league_id)
-            players.sort(key=lambda player: player.get("adjusted_value", 0), reverse=True)
-            league_total = sum(player.get("adjusted_value", 0) for player in players)
-            total_adjusted_value += league_total
-
-            for player in players:
-                sleeper_id = player.get("sleeper_id")
-                if sleeper_id:
-                    player_ownership.setdefault(sleeper_id, {
-                        "sleeper_id": sleeper_id,
-                        "name": player.get("name"),
-                        "position": player.get("position"),
-                        "team": player.get("team"),
-                        "adjusted_value": player.get("adjusted_value", 0),
-                        "leagues": [],
-                    })["leagues"].append({
-                        "league_id": league_id,
-                        "league_name": league_row[1],
-                    })
-
-                position = player.get("position") or "Other"
-                position_stats = positional_breakdown.setdefault(position, {"count": 0, "value": 0})
-                position_stats["count"] += 1
-                position_stats["value"] += player.get("adjusted_value", 0)
-
-            leagues.append({
-                "league_id": league_id,
-                "league_name": league_row[1],
-                "format": league_row[3],
-                "my_roster_id": my_roster_id,
-                "total_adjusted_value": league_total,
-                "players": players,
-            })
-
-    concentrated_ids = {
-        sleeper_id
-        for sleeper_id, ownership in player_ownership.items()
-        if len(ownership["leagues"]) >= 2
-    }
-
-    for league in leagues:
-        for player in league["players"]:
-            ownership = player_ownership.get(player.get("sleeper_id"), {"leagues": []})
-            player["concentrated"] = player.get("sleeper_id") in concentrated_ids
-            player["owned_leagues"] = ownership["leagues"]
-
-    concentrated_players = [
-        ownership
-        for ownership in player_ownership.values()
-        if len(ownership["leagues"]) >= 2
-    ]
-    concentrated_players.sort(key=lambda player: player.get("adjusted_value", 0), reverse=True)
-
-    return {
-        "leagues": leagues,
-        "stats": {
-            "total_unique_players": len(player_ownership),
-            "concentration_risk_players": len(concentrated_players),
-            "total_adjusted_value": total_adjusted_value,
-            "positional_breakdown": positional_breakdown,
-        },
-        "concentrated_players": concentrated_players,
-    }
 
 
 @router.post("/trade/evaluate")
@@ -740,44 +485,6 @@ async def get_manager_detail(league_id: str, roster_id: int):
     return payload
 
 
-
-
-@router.get("/breakout-candidates")
-async def get_breakout_candidates(league_id: str, limit: int = 10):
-    """Return rising players with below-elite value — buy-low opportunities."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        # Try career_stage column first; fall back to age-based proxy if column absent
-        try:
-            async with db.execute(
-                "SELECT sleeper_id, name, position, team, age, value_sf, value_1qb, trend_30d, injury_status "
-                "FROM players WHERE career_stage IN ('rising') AND trend_30d > 75 "
-                "AND value_sf > 0 AND value_sf < 5000 "
-                "ORDER BY trend_30d DESC LIMIT ?",
-                (limit,),
-            ) as cur:
-                rows = await cur.fetchall()
-        except Exception:
-            async with db.execute(
-                "SELECT sleeper_id, name, position, team, age, value_sf, value_1qb, trend_30d, injury_status "
-                "FROM players WHERE age <= 26 AND trend_30d > 75 "
-                "AND value_sf > 0 AND value_sf < 5000 "
-                "ORDER BY trend_30d DESC LIMIT ?",
-                (limit,),
-            ) as cur:
-                rows = await cur.fetchall()
-
-        candidates = []
-        for row in rows:
-            p = {
-                "sleeper_id": row[0], "name": row[1], "position": row[2],
-                "team": row[3], "age": row[4], "value_sf": row[5] or 0,
-                "value_1qb": row[6] or 0, "trend_30d": row[7] or 0,
-                "injury_status": row[8],
-            }
-            candidates.append(enrich_player(p, league_id))
-
-    return candidates
-
 @router.get("/sync")
 async def trigger_sync():
     """Trigger a manual sync in the background."""
@@ -806,97 +513,99 @@ async def get_picks(league_id: str, my_roster_id: Optional[int] = None):
     ]
 
 
-@router.get("/league/{league_id}/trade-history")
-async def get_trade_history(league_id: str, limit: int = 50):
-    """Return chronological trade history for a league with player names resolved."""
+@router.get("/players/{player_id}/profile")
+async def get_player_profile(player_id: str):
+    """Return full dynasty profile for a single player."""
     async with aiosqlite.connect(DB_PATH) as db:
-        await get_league_row(db, league_id)
-
-        # Build roster_id → owner name map
         async with db.execute(
-            "SELECT roster_id, owner_display_name FROM rosters WHERE league_id = ?",
-            (league_id,),
+            "SELECT sleeper_id, name, position, team, age, value_sf, value_1qb, trend_30d, injury_status, depth_chart_order "
+            "FROM players WHERE sleeper_id = ?",
+            (player_id,),
         ) as cur:
-            rows = await cur.fetchall()
-        roster_owners = {row[0]: (row[1] or f"Team {row[0]}") for row in rows}
+            row = await cur.fetchone()
 
-        # Fetch trades newest-first
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Player {player_id} not found.")
+
+        p = {
+            "sleeper_id": row[0], "name": row[1], "position": row[2], "team": row[3],
+            "age": row[4], "value_sf": row[5] or 0, "value_1qb": row[6] or 0,
+            "trend_30d": row[7] or 0, "injury_status": row[8],
+        }
+        # Use the first league config available for enrichment
+        from backend.services.fantasy_engine import LEAGUE_CONFIG
+        league_id = next(iter(LEAGUE_CONFIG), None)
+        enriched = enrich_player(p, league_id) if league_id else p
+
+        # Positional rank: count players with higher value in same position
+        position = row[2] or "WR"
+        value_col = "value_sf" if (league_id and LEAGUE_CONFIG.get(league_id, {}).get("base_format") == "sf") else "value_1qb"
+        player_value = row[5] if value_col == "value_sf" else row[6]
         async with db.execute(
-            """SELECT transaction_id, week, season,
-                      side_a_roster_id, side_b_roster_id,
-                      side_a_player_ids_json, side_b_player_ids_json,
-                      side_a_pick_ids_json, side_b_pick_ids_json,
-                      side_a_total_value, side_b_total_value, created_at
-               FROM trade_history
-               WHERE league_id = ?
-               ORDER BY created_at DESC
-               LIMIT ?""",
-            (league_id, limit),
+            f"SELECT COUNT(*) FROM players WHERE position = ? AND {value_col} > ?",
+            (position, player_value or 0),
         ) as cur:
-            trades = await cur.fetchall()
+            rank_row = await cur.fetchone()
+        positional_rank = (rank_row[0] if rank_row else 0) + 1
 
-        async def resolve_players(player_ids: list) -> list:
-            result = []
-            for pid in player_ids:
-                async with db.execute(
-                    "SELECT name, position FROM players WHERE sleeper_id = ?",
-                    (str(pid),),
-                ) as c2:
-                    row = await c2.fetchone()
-                if row:
-                    result.append({"name": row[0], "position": row[1]})
-                else:
-                    result.append({"name": str(pid), "position": None})
-            return result
+        # Recent snapshots as proxy for recent stats
+        async with db.execute(
+            "SELECT snapshot_date, value_sf, depth_chart_order, injury_status "
+            "FROM player_snapshots WHERE sleeper_id = ? ORDER BY snapshot_date DESC LIMIT 4",
+            (player_id,),
+        ) as cur:
+            snap_rows = await cur.fetchall()
 
-        results = []
-        for t in trades:
-            (txn_id, week, season, a_rid, b_rid,
-             a_players_json, b_players_json,
-             a_picks_json, b_picks_json,
-             a_val, b_val, created_at) = t
+        recent_stats = [
+            {
+                "week": snap[0],
+                "value": snap[1],
+                "depth_chart_order": snap[2],
+                "injury_status": snap[3],
+            }
+            for snap in snap_rows
+        ]
 
-            a_player_ids = json.loads(a_players_json or "[]")
-            b_player_ids = json.loads(b_players_json or "[]")
-            a_picks = json.loads(a_picks_json or "[]")
-            b_picks = json.loads(b_picks_json or "[]")
+        # Comparable players: same position, similar value (within ±15%)
+        value_target = player_value or 1
+        low, high = value_target * 0.85, value_target * 1.15
+        async with db.execute(
+            f"SELECT sleeper_id, name, position, team, age, {value_col}, trend_30d "
+            f"FROM players WHERE position = ? AND {value_col} BETWEEN ? AND ? AND sleeper_id != ? "
+            f"ORDER BY ABS({value_col} - ?) LIMIT 3",
+            (position, low, high, player_id, value_target),
+        ) as cur:
+            comp_rows = await cur.fetchall()
 
-            a_players = await resolve_players(a_player_ids)
-            b_players = await resolve_players(b_player_ids)
+        comparable_players = [
+            {
+                "sleeper_id": cr[0], "name": cr[1], "position": cr[2],
+                "team": cr[3], "age": cr[4], "dynasty_value": cr[5], "trend_30d": cr[6],
+            }
+            for cr in comp_rows
+        ]
 
-            a_val = a_val or 0
-            b_val = b_val or 0
-            delta = a_val - b_val
-            threshold = max(a_val, b_val, 1) * 0.10
+    # Breakout score from enriched data
+    breakout_score = enriched.get("breakout_score", None)
+    career_stage = enriched.get("career_stage", "prime")
+    years_in_prime = enriched.get("years_in_prime_remaining", None)
 
-            if delta > threshold:
-                winner = "side_a"
-            elif delta < -threshold:
-                winner = "side_b"
-            else:
-                winner = "fair"
-
-            results.append({
-                "trade_id": txn_id,
-                "traded_at": created_at,
-                "week": week,
-                "season": season,
-                "side_a": {
-                    "owner": roster_owners.get(a_rid, f"Team {a_rid}"),
-                    "roster_id": a_rid,
-                    "players": a_players,
-                    "picks": a_picks,
-                    "total_value": a_val,
-                },
-                "side_b": {
-                    "owner": roster_owners.get(b_rid, f"Team {b_rid}"),
-                    "roster_id": b_rid,
-                    "players": b_players,
-                    "picks": b_picks,
-                    "total_value": b_val,
-                },
-                "value_delta": delta,
-                "winner": winner,
-            })
-
-    return {"league_id": league_id, "trades": results}
+    return {
+        "sleeper_id": enriched["sleeper_id"],
+        "name": enriched["name"],
+        "position": enriched.get("position"),
+        "team": enriched.get("team"),
+        "age": enriched.get("age"),
+        "years_exp": None,  # not stored in db currently
+        "dynasty_value": enriched.get("adjusted_value", player_value),
+        "dynasty_value_sf": row[5],
+        "dynasty_value_1qb": row[6],
+        "trend_30d": enriched.get("trend_30d", 0),
+        "injury_status": enriched.get("injury_status"),
+        "career_stage": career_stage,
+        "years_in_prime_remaining": years_in_prime,
+        "positional_rank": positional_rank,
+        "breakout_score": breakout_score,
+        "recent_stats": recent_stats,
+        "comparable_players": comparable_players,
+    }

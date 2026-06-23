@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom';
+
 const POSITION_COLORS = {
   QB: '#dc2626',
   RB: '#16a34a',
@@ -33,7 +35,12 @@ export default function PlayerCard({ player }) {
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
         <div>
-          <div style={{ fontWeight: 800 }}>{player.name}</div>
+          <Link
+            to={`/players/${player.sleeper_id}`}
+            style={{ color: '#1d4ed8', fontWeight: 800, textDecoration: 'none' }}
+          >
+            {player.name}
+          </Link>
           <div style={{ color: '#667085', fontSize: 13 }}>
             Age {player.age || 'N/A'} - {stageIcon} {player.career_stage || 'prime'}
           </div>
