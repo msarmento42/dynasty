@@ -40,6 +40,7 @@ body {
   min-width: 320px;
   background: var(--bg-app);
   color: var(--text-primary);
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 button,
@@ -52,6 +53,7 @@ a {
   background:
     linear-gradient(180deg, rgba(15, 123, 99, 0.08), transparent 240px),
     var(--bg-app);
+  transition: background 0.25s ease;
 }
 
 .app-header {
@@ -66,6 +68,7 @@ a {
   top: 0;
   z-index: 10;
   backdrop-filter: blur(18px);
+  transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 
 .brand-block {
