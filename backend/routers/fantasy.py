@@ -616,7 +616,7 @@ async def get_calibration(league_id: str):
 
 
 @router.get("/trade-history/{league_id}")
-async def get_trade_history(league_id: str):
+async def get_trade_history_legacy(league_id: str):
     """Return recent stored trade history with player names resolved."""
     async with aiosqlite.connect(DB_PATH) as db:
         await get_league_row(db, league_id)
