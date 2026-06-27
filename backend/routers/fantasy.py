@@ -519,7 +519,8 @@ async def get_player_profile(player_id: str):
     """Return full dynasty profile for a single player."""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            "SELECT sleeper_id, name, position, team, age, value_sf, value_1qb, trend_30d, injury_status, depth_chart_order "
+            "SELECT sleeper_id, name, position, team, age, value_sf, value_1qb, "
+            "trend_30d, injury_status, depth_chart_order "
             "FROM players WHERE sleeper_id = ?",
             (player_id,),
         ) as cur:
@@ -540,7 +541,11 @@ async def get_player_profile(player_id: str):
 
         # Positional rank: count players with higher value in same position
         position = row[2] or "WR"
-        value_col = "value_sf" if (league_id and LEAGUE_CONFIG.get(league_id, {}).get("base_format") == "sf") else "value_1qb"
+        value_col = (
+            "value_sf"
+            if league_id and LEAGUE_CONFIG.get(league_id, {}).get("base_format") == "sf"
+            else "value_1qb"
+        )
         player_value = row[5] if value_col == "value_sf" else row[6]
         async with db.execute(
             f"SELECT COUNT(*) FROM players WHERE position = ? AND {value_col} > ?",
@@ -920,7 +925,7 @@ async def get_team_needs(league_id: str):
     POSITIONS = ["QB", "RB", "WR", "TE"]
 
     async with aiosqlite.connect(DB_PATH) as db:
-        league = await get_league_row(db, league_id)
+        await get_league_row(db, league_id)
 
         async with db.execute(
             "SELECT roster_id, owner_display_name, player_ids_json "
@@ -990,3 +995,420 @@ async def get_team_needs(league_id: str):
         })
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# F04: Start/Sit Recommendations
+# ---------------------------------------------------------------------------
+
+STARTER_SLOTS = {"QB": 1, "RB": 2, "WR": 3, "TE": 1}
+INJURY_MULTIPLIER = {"OUT": 0.0, "DOUBTFUL": 0.3, "QUESTIONABLE": 0.7, "PROBABLE": 0.95}
+
+
+def _injury_mult(status):
+    if not status:
+        return 1.0
+    return INJURY_MULTIPLIER.get(status.upper(), 1.0)
+
+
+def _depth_mult(depth):
+    if depth is None or depth <= 0:
+        return 1.0
+    if depth == 1:
+        return 1.0
+    if depth == 2:
+        return 0.7
+    return 0.4
+
+
+@router.get("/startsit/{league_id}")
+async def get_startsit(league_id: str):
+    """Return start/sit recommendations for Marcus's roster in the given league."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        league = await get_league_row(db, league_id)
+        my_roster_id = league["config"].get("my_roster_id", league["my_roster_id"])
+
+        async with db.execute(
+            "SELECT player_ids_json FROM rosters WHERE league_id=? AND roster_id=?",
+            (league_id, my_roster_id),
+        ) as cur:
+            row = await cur.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Roster not found. Run daily sync first.")
+
+        player_ids = json.loads(row[0] or "[]")
+        if not player_ids:
+            return {"recommendations": [], "optimal_lineup": {}}
+
+        placeholders = ",".join("?" * len(player_ids))
+        async with db.execute(
+            f"SELECT sleeper_id, name, position, team, value_sf, injury_status, depth_chart_order "
+            f"FROM players WHERE sleeper_id IN ({placeholders})",
+            player_ids,
+        ) as cur:
+            player_rows = await cur.fetchall()
+
+    players = []
+    for r in player_rows:
+        sleeper_id, name, position, team, value_sf, injury_status, depth = r
+        value_sf = value_sf or 0
+        score = value_sf * _injury_mult(injury_status) * _depth_mult(depth)
+        players.append({
+            "sleeper_id": sleeper_id,
+            "name": name,
+            "position": position,
+            "team": team,
+            "value_sf": value_sf,
+            "injury_status": injury_status,
+            "depth_chart_order": depth,
+            "score": score,
+        })
+
+    by_pos = {}
+    for p in players:
+        pos = p["position"]
+        if pos in STARTER_SLOTS:
+            by_pos.setdefault(pos, []).append(p)
+
+    recommendations = []
+    optimal_lineup = {}
+    already_flagged_out = set()
+
+    for pos, slots in STARTER_SLOTS.items():
+        pos_players = sorted(by_pos.get(pos, []), key=lambda x: x["score"], reverse=True)
+        starters = pos_players[:slots]
+        bench = pos_players[slots:]
+
+        optimal_lineup[pos] = starters
+
+        for bench_player in bench:
+            for starter in starters:
+                if bench_player["score"] > starter["score"]:
+                    value_diff = round(bench_player["score"] - starter["score"], 1)
+                    reason_parts = []
+                    if starter["injury_status"]:
+                        reason_parts.append(f"{starter['name']} is {starter['injury_status']}")
+                    if bench_player["value_sf"] > starter["value_sf"]:
+                        reason_parts.append(f"{bench_player['name']} has higher dynasty value")
+                    if bench_player["depth_chart_order"] == 1 and (starter["depth_chart_order"] or 0) > 1:
+                        reason_parts.append(f"{bench_player['name']} is the depth-1 starter")
+                    reason = "; ".join(reason_parts) if reason_parts else "Higher projected score"
+                    already_flagged_out.add(starter["sleeper_id"])
+                    recommendations.append({
+                        "action": "START",
+                        "player_in": {
+                            "sleeper_id": bench_player["sleeper_id"],
+                            "name": bench_player["name"],
+                            "position": bench_player["position"],
+                            "team": bench_player["team"],
+                            "value_sf": bench_player["value_sf"],
+                            "injury_status": bench_player["injury_status"],
+                            "score": round(bench_player["score"], 1),
+                        },
+                        "player_out": {
+                            "sleeper_id": starter["sleeper_id"],
+                            "name": starter["name"],
+                            "position": starter["position"],
+                            "team": starter["team"],
+                            "value_sf": starter["value_sf"],
+                            "injury_status": starter["injury_status"],
+                            "score": round(starter["score"], 1),
+                        },
+                        "value_diff": value_diff,
+                        "reason": reason,
+                    })
+                    break
+
+        for starter in starters:
+            inj = (starter["injury_status"] or "").upper()
+            if inj in ("OUT", "DOUBTFUL") and starter["sleeper_id"] not in already_flagged_out:
+                recommendations.append({
+                    "action": "SIT",
+                    "player_in": None,
+                    "player_out": {
+                        "sleeper_id": starter["sleeper_id"],
+                        "name": starter["name"],
+                        "position": starter["position"],
+                        "team": starter["team"],
+                        "value_sf": starter["value_sf"],
+                        "injury_status": starter["injury_status"],
+                        "score": round(starter["score"], 1),
+                    },
+                    "value_diff": 0,
+                    "reason": f"{starter['name']} is listed as {starter['injury_status']}",
+                })
+
+    recommendations.sort(key=lambda r: r["value_diff"], reverse=True)
+
+    serialized_lineup = {}
+    for pos, pos_starters in optimal_lineup.items():
+        serialized_lineup[pos] = [
+            {
+                "sleeper_id": p["sleeper_id"],
+                "name": p["name"],
+                "position": p["position"],
+                "team": p["team"],
+                "value_sf": p["value_sf"],
+                "injury_status": p["injury_status"],
+                "score": round(p["score"], 1),
+            }
+            for p in pos_starters
+        ]
+
+    return {
+        "league_id": league_id,
+        "recommendations": recommendations,
+        "optimal_lineup": serialized_lineup,
+    }
+
+
+# ---------------------------------------------------------------------------
+# F05: Waiver Wire Ranker
+# ---------------------------------------------------------------------------
+
+@router.get("/waiver/{league_id}")
+async def get_waiver_wire(league_id: str):
+    """Return top free agents not rostered in this league, sorted by dynasty value."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await get_league_row(db, league_id)
+
+        async with db.execute(
+            "SELECT player_ids_json FROM rosters WHERE league_id=?",
+            (league_id,),
+        ) as cur:
+            roster_rows = await cur.fetchall()
+
+        rostered_ids = set()
+        for (pid_json,) in roster_rows:
+            ids = json.loads(pid_json or "[]")
+            rostered_ids.update(ids)
+
+        if rostered_ids:
+            placeholders = ",".join("?" * len(rostered_ids))
+            query = (
+                f"SELECT sleeper_id, name, position, team, value_sf, injury_status, depth_chart_order "
+                f"FROM players "
+                f"WHERE sleeper_id NOT IN ({placeholders}) "
+                f"AND position IN ('QB','RB','WR','TE','K','DEF') "
+                f"ORDER BY value_sf DESC "
+                f"LIMIT 100"
+            )
+            async with db.execute(query, list(rostered_ids)) as cur:
+                rows = await cur.fetchall()
+        else:
+            async with db.execute(
+                "SELECT sleeper_id, name, position, team, value_sf, injury_status, depth_chart_order "
+                "FROM players "
+                "WHERE position IN ('QB','RB','WR','TE','K','DEF') "
+                "ORDER BY value_sf DESC LIMIT 100"
+            ) as cur:
+                rows = await cur.fetchall()
+
+    free_agents = []
+    for r in rows:
+        sleeper_id, name, position, team, value_sf, injury_status, depth = r
+        free_agents.append({
+            "sleeper_id": sleeper_id,
+            "name": name,
+            "position": position,
+            "team": team or "",
+            "value_sf": value_sf or 0,
+            "injury_status": injury_status,
+            "depth_chart_order": depth,
+            "roster_pct": 0,
+        })
+
+    return {
+        "league_id": league_id,
+        "free_agents": free_agents,
+        "total": len(free_agents),
+    }
+
+
+# ---------------------------------------------------------------------------
+# F01 — Player News & Injury Feed
+# ---------------------------------------------------------------------------
+
+@router.get("/news")
+async def get_news(league_id: Optional[str] = None):
+    """Return the last 50 news items, optionally filtered to a league's roster players."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        owned_ids: Optional[set] = None
+        if league_id:
+            # Collect all player IDs Marcus owns in this league
+            async with db.execute(
+                "SELECT player_ids_json FROM rosters WHERE league_id = ? AND my_roster_id IS NOT NULL "
+                "UNION ALL "
+                "SELECT r.player_ids_json FROM rosters r "
+                "JOIN leagues l ON l.league_id = r.league_id AND l.my_roster_id = r.roster_id "
+                "WHERE r.league_id = ?",
+                (league_id, league_id),
+            ) as cur:
+                rows = await cur.fetchall()
+
+            if rows:
+                owned_ids = set()
+                for row in rows:
+                    ids = json.loads(row[0] or "[]")
+                    owned_ids.update(ids)
+
+            # If no roster match found, fetch all rosters for league and find Marcus's
+            if not owned_ids:
+                async with db.execute(
+                    "SELECT l.my_roster_id, r.player_ids_json "
+                    "FROM leagues l JOIN rosters r ON r.league_id = l.league_id AND r.roster_id = l.my_roster_id "
+                    "WHERE l.league_id = ?",
+                    (league_id,),
+                ) as cur:
+                    row = await cur.fetchone()
+                if row:
+                    owned_ids = set(json.loads(row[1] or "[]"))
+
+        if owned_ids is not None and len(owned_ids) == 0:
+            # No players found for this league
+            return []
+
+        # Build query
+        if owned_ids:
+            placeholders = ",".join("?" * len(owned_ids))
+            query = (
+                f"SELECT n.sleeper_id, n.player_name, n.headline, n.detail, n.source, n.published_at, "
+                f"p.position, p.team "
+                f"FROM news_items n LEFT JOIN players p ON p.sleeper_id = n.sleeper_id "
+                f"WHERE n.sleeper_id IN ({placeholders}) "
+                f"ORDER BY n.published_at DESC LIMIT 50"
+            )
+            async with db.execute(query, list(owned_ids)) as cur:
+                rows = await cur.fetchall()
+        else:
+            query = (
+                "SELECT n.sleeper_id, n.player_name, n.headline, n.detail, n.source, n.published_at, "
+                "p.position, p.team "
+                "FROM news_items n LEFT JOIN players p ON p.sleeper_id = n.sleeper_id "
+                "ORDER BY n.published_at DESC LIMIT 50"
+            )
+            async with db.execute(query) as cur:
+                rows = await cur.fetchall()
+
+    return [
+        {
+            "sleeper_id": r[0],
+            "player_name": r[1],
+            "headline": r[2],
+            "detail": r[3],
+            "source": r[4],
+            "published_at": r[5],
+            "position": r[6],
+            "team": r[7],
+        }
+        for r in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
+# F03 — Value Movers (7-day delta)
+# ---------------------------------------------------------------------------
+
+@router.get("/players/movers")
+async def get_value_movers():
+    """Return top 10 gainers and top 10 losers by value change over the last 7 days."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Collect all player IDs Marcus owns across all leagues
+        async with db.execute(
+            "SELECT l.my_roster_id, r.player_ids_json "
+            "FROM leagues l JOIN rosters r ON r.league_id = l.league_id AND r.roster_id = l.my_roster_id"
+        ) as cur:
+            roster_rows = await cur.fetchall()
+
+        owned_ids: set = set()
+        for row in roster_rows:
+            owned_ids.update(json.loads(row[1] or "[]"))
+
+        if not owned_ids:
+            return {"gainers": [], "losers": [], "note": "No rosters found — run daily sync first."}
+
+        placeholders = ",".join("?" * len(owned_ids))
+        owned_list = list(owned_ids)
+
+        # Get latest snapshot per player
+        async with db.execute(
+            f"SELECT s.sleeper_id, s.value_sf, s.snapshot_date "
+            f"FROM player_snapshots s "
+            f"INNER JOIN ("
+            f"  SELECT sleeper_id, MAX(snapshot_date) AS max_date "
+            f"  FROM player_snapshots WHERE sleeper_id IN ({placeholders}) GROUP BY sleeper_id"
+            f") latest ON s.sleeper_id = latest.sleeper_id AND s.snapshot_date = latest.max_date",
+            owned_list,
+        ) as cur:
+            latest_rows = await cur.fetchall()
+
+        if not latest_rows:
+            return {"gainers": [], "losers": [], "note": "No snapshot data yet — snapshots are recorded during daily sync."}
+
+        latest = {r[0]: {"value": r[1], "date": r[2]} for r in latest_rows}
+
+        # For each player, get the snapshot closest to 7 days ago
+        seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+
+        movers = []
+        for sleeper_id, snap in latest.items():
+            async with db.execute(
+                "SELECT value_sf, snapshot_date FROM player_snapshots "
+                "WHERE sleeper_id = ? AND snapshot_date <= ? "
+                "ORDER BY snapshot_date DESC LIMIT 1",
+                (sleeper_id, seven_days_ago),
+            ) as cur:
+                old_row = await cur.fetchone()
+
+            if not old_row:
+                continue  # no old snapshot available
+
+            value_now = snap["value"] or 0
+            value_old = old_row[0] or 0
+
+            if value_old == 0:
+                continue
+
+            delta = value_now - value_old
+            delta_pct = round((delta / value_old) * 100, 1)
+
+            # Skip trivial moves
+            if abs(delta) < 1:
+                continue
+
+            movers.append({
+                "sleeper_id": sleeper_id,
+                "value_now": value_now,
+                "value_7d_ago": value_old,
+                "delta": delta,
+                "delta_pct": delta_pct,
+            })
+
+        if not movers:
+            return {"gainers": [], "losers": [], "note": "Not enough historical snapshots yet (need at least 7 days of data)."}
+
+        # Enrich with player info
+        all_ids = [m["sleeper_id"] for m in movers]
+        placeholders2 = ",".join("?" * len(all_ids))
+        async with db.execute(
+            f"SELECT sleeper_id, name, position, team FROM players WHERE sleeper_id IN ({placeholders2})",
+            all_ids,
+        ) as cur:
+            player_rows = await cur.fetchall()
+
+        player_info = {r[0]: {"name": r[1], "position": r[2], "team": r[3]} for r in player_rows}
+
+        for m in movers:
+            info = player_info.get(m["sleeper_id"], {})
+            m["player_name"] = info.get("name", m["sleeper_id"])
+            m["position"] = info.get("position", "")
+            m["team"] = info.get("team", "")
+
+        movers.sort(key=lambda x: x["delta"], reverse=True)
+        gainers = movers[:10]
+        losers = list(reversed(movers[-10:])) if len(movers) >= 10 else list(reversed(movers))
+
+    return {"gainers": gainers, "losers": losers}
