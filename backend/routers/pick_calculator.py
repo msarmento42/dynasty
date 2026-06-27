@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
 
 from backend.database import DB_PATH
@@ -178,7 +178,6 @@ async def search_players(q: str = "", limit: int = 20):
 
     players = []
     for r in rows:
-        lid = next(iter(LEAGUE_CONFIG)) if LEAGUE_CONFIG else ""
         value = r[4] or r[5] or 0
         players.append({
             "sleeper_id": r[0],
