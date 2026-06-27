@@ -127,3 +127,15 @@ CREATE TABLE IF NOT EXISTS sync_log (
     message TEXT,
     ran_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS league_settings (
+    league_id TEXT PRIMARY KEY,
+    league_name TEXT,
+    is_superflex INTEGER DEFAULT 0,
+    is_te_premium INTEGER DEFAULT 0,
+    qb_slots INTEGER DEFAULT 1,
+    rec_format TEXT DEFAULT 'PPR',
+    format_label TEXT DEFAULT '1QB',
+    raw_json TEXT,
+    updated_at TEXT
+);
