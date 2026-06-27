@@ -11,6 +11,7 @@ from backend.services.fantasy_engine import LEAGUE_CONFIG, enrich_player
 
 router = APIRouter()
 
+
 # Default playoff spots (top 6 of 12, top 2 of 4, etc.)
 def playoff_spots(n_teams: int) -> int:
     if n_teams <= 4:
@@ -18,6 +19,7 @@ def playoff_spots(n_teams: int) -> int:
     if n_teams <= 8:
         return 4
     return 6
+
 
 TOTAL_REGULAR_SEASON_WEEKS = 14
 CURRENT_WEEK = 10  # assume mid-season for mock
@@ -179,7 +181,10 @@ async def simulate_playoffs(
         results.append({
             "roster_id": team["roster_id"],
             "team_name": team["team_name"],
-            "current_record": f"{round(CURRENT_WEEK * win_rate * (n-1) / n)}-{round(CURRENT_WEEK * (1 - win_rate) * (n-1) / n)}",
+            "current_record": (
+                f"{round(CURRENT_WEEK * win_rate * (n - 1) / n)}-"
+                f"{round(CURRENT_WEEK * (1 - win_rate) * (n - 1) / n)}"
+            ),
             "playoff_probability": round(prob * 100, 1),
             "avg_wins": avg_wins,
             "simulations": simulations,
