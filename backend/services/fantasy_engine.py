@@ -121,6 +121,50 @@ def pick_value(round: int, years_away: int, n_teams: int) -> int:
     return int(base * year_discount * scarcity)
 
 
+# -- Positional impact ------------------------------------------------------
+
+TRADE_POSITIONS = ("QB", "RB", "WR", "TE")
+
+
+def positional_counts(players: list) -> dict:
+    """Count fantasy-relevant player positions in a list of enriched players."""
+    counts = {position: 0 for position in TRADE_POSITIONS}
+    for player in players:
+        position = (player.get("position") or "").upper()
+        if position in counts:
+            counts[position] += 1
+    return counts
+
+
+def trade_positional_impact(side_a_players: list, side_b_players: list) -> dict:
+    """
+    Return net positional changes for both sides of a trade.
+
+    In the Trade Builder, side A is Marcus' outgoing side and side B is the
+    incoming side, so "you" gain side B positions and lose side A positions.
+    """
+    side_a_counts = positional_counts(side_a_players)
+    side_b_counts = positional_counts(side_b_players)
+
+    positions = []
+    for position in TRADE_POSITIONS:
+        you_delta = side_b_counts[position] - side_a_counts[position]
+        them_delta = -you_delta
+        positions.append({
+            "position": position,
+            "you": you_delta,
+            "them": them_delta,
+            "you_send": side_a_counts[position],
+            "you_receive": side_b_counts[position],
+        })
+
+    return {
+        "positions": positions,
+        "you": {item["position"]: item["you"] for item in positions},
+        "them": {item["position"]: item["them"] for item in positions},
+    }
+
+
 # -- Player enrichment ------------------------------------------------------
 
 def enrich_player(player: dict, league_id: str) -> dict:
