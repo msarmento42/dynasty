@@ -2,6 +2,7 @@
 
 import json
 import random
+from datetime import date
 
 import aiosqlite
 from fastapi import APIRouter, Query
@@ -11,6 +12,7 @@ from backend.services.fantasy_engine import LEAGUE_CONFIG, enrich_player
 
 router = APIRouter()
 
+
 # Default playoff spots (top 6 of 12, top 2 of 4, etc.)
 def playoff_spots(n_teams: int) -> int:
     if n_teams <= 4:
@@ -19,8 +21,24 @@ def playoff_spots(n_teams: int) -> int:
         return 4
     return 6
 
+
 TOTAL_REGULAR_SEASON_WEEKS = 14
-CURRENT_WEEK = 10  # assume mid-season for mock
+
+
+def get_current_nfl_week() -> int:
+    """NFL regular season runs ~Sept week 1 through ~Jan week 18."""
+    today = date.today()
+    # NFL season typically starts first Thursday of September
+    # Week 1 of 2025 season = Sept 4, 2025
+    nfl_week1_2025 = date(2025, 9, 4)
+    delta = (today - nfl_week1_2025).days
+    if delta < 0:
+        return 1  # preseason / offseason
+    week = (delta // 7) + 1
+    return min(max(week, 1), 18)
+
+
+CURRENT_WEEK = get_current_nfl_week()
 
 
 async def load_teams_from_db(league_id: str) -> list:
@@ -179,7 +197,10 @@ async def simulate_playoffs(
         results.append({
             "roster_id": team["roster_id"],
             "team_name": team["team_name"],
-            "current_record": f"{round(CURRENT_WEEK * win_rate * (n-1) / n)}-{round(CURRENT_WEEK * (1 - win_rate) * (n-1) / n)}",
+            "current_record": (
+                f"{round(CURRENT_WEEK * win_rate * (n - 1) / n)}-"
+                f"{round(CURRENT_WEEK * (1 - win_rate) * (n - 1) / n)}"
+            ),
             "playoff_probability": round(prob * 100, 1),
             "avg_wins": avg_wins,
             "simulations": simulations,
