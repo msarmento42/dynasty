@@ -519,7 +519,8 @@ async def get_player_profile(player_id: str):
     """Return full dynasty profile for a single player."""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            "SELECT sleeper_id, name, position, team, age, value_sf, value_1qb, trend_30d, injury_status, depth_chart_order "
+            "SELECT sleeper_id, name, position, team, age, value_sf, value_1qb, "
+            "trend_30d, injury_status, depth_chart_order "
             "FROM players WHERE sleeper_id = ?",
             (player_id,),
         ) as cur:
@@ -540,7 +541,11 @@ async def get_player_profile(player_id: str):
 
         # Positional rank: count players with higher value in same position
         position = row[2] or "WR"
-        value_col = "value_sf" if (league_id and LEAGUE_CONFIG.get(league_id, {}).get("base_format") == "sf") else "value_1qb"
+        value_col = (
+            "value_sf"
+            if league_id and LEAGUE_CONFIG.get(league_id, {}).get("base_format") == "sf"
+            else "value_1qb"
+        )
         player_value = row[5] if value_col == "value_sf" else row[6]
         async with db.execute(
             f"SELECT COUNT(*) FROM players WHERE position = ? AND {value_col} > ?",
@@ -920,7 +925,7 @@ async def get_team_needs(league_id: str):
     POSITIONS = ["QB", "RB", "WR", "TE"]
 
     async with aiosqlite.connect(DB_PATH) as db:
-        league = await get_league_row(db, league_id)
+        await get_league_row(db, league_id)
 
         async with db.execute(
             "SELECT roster_id, owner_display_name, player_ids_json "
