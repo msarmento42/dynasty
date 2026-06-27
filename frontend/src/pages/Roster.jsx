@@ -1,15 +1,13 @@
 import { useCallback, useMemo, useState } from 'react';
-import AgeCurveChart from '../components/AgeCurveChart.jsx';
 import LeagueSelector from '../components/LeagueSelector.jsx';
 import PlayerCard from '../components/PlayerCard.jsx';
-import RosterGrade from '../components/RosterGrade.jsx';
 
 const POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
 
 export default function Roster() {
   const [selectedLeague, setSelectedLeague] = useState(null);
   const [rosterData, setRosterData] = useState(null);
-  const [rosterGrade, setRosterGrade] = useState(null);
+  const [leagueSettings, setLeagueSettings] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -17,28 +15,25 @@ export default function Roster() {
     setSelectedLeague(leagueId);
     setLoading(true);
     setError('');
+    setLeagueSettings(null);
 
     try {
-      const [rosterResponse, gradesResponse] = await Promise.all([
+      const [rosterRes, settingsRes] = await Promise.allSettled([
         fetch(`/fantasy/league/${leagueId}/roster`),
-        fetch(`/fantasy/league/${leagueId}/grades`),
+        fetch(`/fantasy/league/${leagueId}/settings`),
       ]);
-      if (!rosterResponse.ok) {
+
+      if (rosterRes.status === 'fulfilled' && rosterRes.value.ok) {
+        setRosterData(await rosterRes.value.json());
+      } else {
         throw new Error('Unable to load roster');
       }
-      if (!gradesResponse.ok) {
-        throw new Error('Unable to load roster grade');
+
+      if (settingsRes.status === 'fulfilled' && settingsRes.value.ok) {
+        setLeagueSettings(await settingsRes.value.json());
       }
-
-      const nextRosterData = await rosterResponse.json();
-      const grades = await gradesResponse.json();
-      const mine = grades.find((grade) => grade.is_mine || grade.roster_id === nextRosterData.my_roster_id);
-
-      setRosterData(nextRosterData);
-      setRosterGrade(mine || null);
     } catch (err) {
       setRosterData(null);
-      setRosterGrade(null);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -74,7 +69,6 @@ export default function Roster() {
                 border: '1px solid #d9dee7',
                 borderRadius: 8,
                 display: 'flex',
-                gap: 16,
                 justifyContent: 'space-between',
                 padding: 18,
               }}
@@ -82,13 +76,18 @@ export default function Roster() {
               <div>
                 <h2 style={{ margin: 0 }}>{rosterData.league_name}</h2>
                 <p style={{ color: '#667085', margin: '4px 0 0' }}>Selected league: {selectedLeague}</p>
+                {leagueSettings && (
+                  <p style={{ color: '#6b7280', fontSize: 13, margin: '6px 0 0' }}>
+                    Values shown for{' '}
+                    <strong>{leagueSettings.format_label}</strong> format
+                    {leagueSettings.is_te_premium && ' · TE Premium'}
+                    {' · '}{leagueSettings.rec_format}
+                  </p>
+                )}
               </div>
-              <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'end' }}>
-                <RosterGrade grade={rosterGrade} />
-                <strong style={{ fontSize: 22 }}>
-                  {Number(rosterData.total_adjusted_value || 0).toLocaleString()}
-                </strong>
-              </div>
+              <strong style={{ fontSize: 22 }}>
+                {Number(rosterData.total_adjusted_value || 0).toLocaleString()}
+              </strong>
             </header>
 
             {POSITION_ORDER.map((position) => {
@@ -116,23 +115,6 @@ export default function Roster() {
                 </section>
               );
             })}
-
-            <details
-              open
-              style={{
-                background: '#ffffff',
-                border: '1px solid #d9dee7',
-                borderRadius: 8,
-                padding: 18,
-              }}
-            >
-              <summary style={{ cursor: 'pointer', fontSize: 18, fontWeight: 800 }}>
-                Age Profile
-              </summary>
-              <div style={{ marginTop: 16 }}>
-                <AgeCurveChart players={rosterData.players || []} />
-              </div>
-            </details>
 
             <footer style={{ color: '#475467', fontWeight: 700 }}>
               Total roster value: {Number(rosterData.total_adjusted_value || 0).toLocaleString()}
