@@ -1412,3 +1412,812 @@ async def get_value_movers():
         losers = list(reversed(movers[-10:])) if len(movers) >= 10 else list(reversed(movers))
 
     return {"gainers": gainers, "losers": losers}
+
+
+# ---------------------------------------------------------------------------
+# Feature 1: Dynasty Power Rankings
+# ---------------------------------------------------------------------------
+
+PICK_VALUES_BY_ROUND = {1: 5000, 2: 1500, 3: 600, 4: 150}
+
+
+@router.get("/league/{league_id}/power-rankings")
+async def get_power_rankings(league_id: str):
+    """Return power rankings for all teams: roster value + pick assets = power score."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        league = await get_league_row(db, league_id)
+        my_roster_id = league["config"].get("my_roster_id", league["my_roster_id"])
+
+        # 1. Fetch all rosters
+        async with db.execute(
+            "SELECT roster_id, owner_display_name, player_ids_json "
+            "FROM rosters WHERE league_id=? ORDER BY roster_id",
+            (league_id,),
+        ) as cur:
+            roster_rows = await cur.fetchall()
+
+        # 2. Fetch picks per roster
+        async with db.execute(
+            "SELECT current_owner_id, round FROM picks WHERE league_id=?",
+            (league_id,),
+        ) as cur:
+            pick_rows = await cur.fetchall()
+
+        # Group picks by owner
+        picks_by_owner: dict = {}
+        for owner_id, rnd in pick_rows:
+            picks_by_owner.setdefault(owner_id, []).append(rnd)
+
+        # 3. Compute roster values
+        teams = []
+        for roster_id, owner, pid_json in roster_rows:
+            player_ids = json.loads(pid_json or "[]")
+
+            roster_value = 0.0
+            if player_ids:
+                placeholders = ",".join("?" * len(player_ids))
+                async with db.execute(
+                    f"SELECT value_sf, value_1qb FROM players WHERE sleeper_id IN ({placeholders})",
+                    player_ids,
+                ) as cur:
+                    prows = await cur.fetchall()
+                for vsf, v1qb in prows:
+                    roster_value += float(vsf or v1qb or 0)
+
+            # Pick value
+            owner_picks = picks_by_owner.get(roster_id, [])
+            pick_value_total = sum(PICK_VALUES_BY_ROUND.get(rnd, 100) for rnd in owner_picks)
+
+            power_score = roster_value + pick_value_total
+            teams.append({
+                "roster_id": roster_id,
+                "owner_display_name": owner or f"Team {roster_id}",
+                "is_mine": roster_id == my_roster_id,
+                "roster_value": round(roster_value),
+                "pick_value": round(pick_value_total),
+                "power_score": round(power_score),
+                "_picks_detail": owner_picks,
+            })
+
+        # 4. Sort by power score and assign ranks
+        teams.sort(key=lambda t: t["power_score"], reverse=True)
+        for i, team in enumerate(teams):
+            team["rank"] = i + 1
+
+        # 5. Compute last-week ranks using player_snapshots
+        seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+
+        # Get old snapshot values per player
+        async with db.execute(
+            """
+            SELECT s.sleeper_id, s.value_sf
+            FROM player_snapshots s
+            INNER JOIN (
+                SELECT sleeper_id, MAX(snapshot_date) AS max_date
+                FROM player_snapshots
+                WHERE snapshot_date <= ?
+                GROUP BY sleeper_id
+            ) old ON s.sleeper_id = old.sleeper_id AND s.snapshot_date = old.max_date
+            """,
+            (seven_days_ago,),
+        ) as cur:
+            old_snap_rows = await cur.fetchall()
+
+        old_values = {r[0]: float(r[1] or 0) for r in old_snap_rows}
+
+        # Re-compute old roster values per team
+        if old_values:
+            old_rosters: list = []
+            for roster_id, owner, pid_json in roster_rows:
+                player_ids = json.loads(pid_json or "[]")
+                old_roster_val = sum(old_values.get(pid, 0) for pid in player_ids)
+                owner_picks = picks_by_owner.get(roster_id, [])
+                old_pick_val = sum(PICK_VALUES_BY_ROUND.get(rnd, 100) for rnd in owner_picks)
+                old_rosters.append({
+                    "roster_id": roster_id,
+                    "old_power_score": old_roster_val + old_pick_val,
+                })
+
+            old_rosters.sort(key=lambda t: t["old_power_score"], reverse=True)
+            old_rank_map = {t["roster_id"]: i + 1 for i, t in enumerate(old_rosters)}
+
+            for team in teams:
+                old_rank = old_rank_map.get(team["roster_id"])
+                team["prev_rank"] = old_rank
+                if old_rank:
+                    team["rank_change"] = old_rank - team["rank"]  # positive = moved up
+                else:
+                    team["rank_change"] = None
+        else:
+            for team in teams:
+                team["prev_rank"] = None
+                team["rank_change"] = None
+
+        # Remove internal field
+        for team in teams:
+            team.pop("_picks_detail", None)
+
+    return {
+        "league_id": league_id,
+        "league_name": league["name"],
+        "my_roster_id": my_roster_id,
+        "rankings": teams,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Feature 2: Trade Database with Search (extends existing /trade-history/{league_id})
+# ---------------------------------------------------------------------------
+
+@router.get("/league/{league_id}/trade-history")
+async def get_league_trade_history(
+    league_id: str,
+    search: Optional[str] = None,
+    season: Optional[int] = None,
+    limit: int = 50,
+):
+    """Trade history with player names resolved. Supports ?search=name and ?season=YYYY."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await get_league_row(db, league_id)
+
+        # Build WHERE clause
+        conditions = ["league_id=?"]
+        params: list = [league_id]
+        if season:
+            conditions.append("season=?")
+            params.append(season)
+
+        where = " AND ".join(conditions)
+
+        async with db.execute(
+            f"""
+            SELECT transaction_id, week, season,
+                   side_a_player_ids_json, side_b_player_ids_json,
+                   side_a_pick_ids_json, side_b_pick_ids_json,
+                   side_a_total_value, side_b_total_value,
+                   side_a_roster_id, side_b_roster_id,
+                   created_at
+            FROM trade_history
+            WHERE {where}
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            [*params, limit],
+        ) as cur:
+            rows = await cur.fetchall()
+
+        # Collect all player IDs to resolve names in one query
+        player_ids_needed: set = set()
+        roster_ids_needed: set = set()
+        parsed_rows = []
+        for row in rows:
+            side_a_ids = json.loads(row[3] or "[]")
+            side_b_ids = json.loads(row[4] or "[]")
+            player_ids_needed.update(side_a_ids)
+            player_ids_needed.update(side_b_ids)
+            roster_ids_needed.update([row[9], row[10]])
+            parsed_rows.append((row, side_a_ids, side_b_ids))
+
+        # Resolve player names + values
+        player_info: dict = {}
+        if player_ids_needed:
+            ph = ",".join("?" * len(player_ids_needed))
+            async with db.execute(
+                f"SELECT sleeper_id, name, position, value_sf, value_1qb FROM players WHERE sleeper_id IN ({ph})",
+                list(player_ids_needed),
+            ) as cur:
+                for pid, pname, ppos, vsf, v1qb in await cur.fetchall():
+                    player_info[pid] = {
+                        "name": pname or pid,
+                        "position": ppos or "",
+                        "value": vsf or v1qb or 0,
+                    }
+
+        # Resolve owner names via rosters
+        owner_names: dict = {}
+        if roster_ids_needed:
+            ph2 = ",".join("?" * len(roster_ids_needed))
+            async with db.execute(
+                f"SELECT roster_id, owner_display_name FROM rosters WHERE league_id=? AND roster_id IN ({ph2})",
+                [league_id, *list(roster_ids_needed)],
+            ) as cur:
+                for rid, oname in await cur.fetchall():
+                    owner_names[rid] = oname or f"Team {rid}"
+
+    def resolve_players(ids):
+        result = []
+        for pid in ids:
+            info = player_info.get(pid, {"name": pid, "position": "", "value": 0})
+            result.append({
+                "sleeper_id": pid,
+                "name": info["name"],
+                "position": info["position"],
+                "value": info["value"],
+            })
+        return result
+
+    def parse_picks(picks_json):
+        raw = json.loads(picks_json or "[]")
+        result = []
+        for pk in raw:
+            if isinstance(pk, dict):
+                rnd = pk.get("round", pk.get("r", 0))
+                yr = pk.get("year", pk.get("season", 0))
+            else:
+                rnd, yr = 0, 0
+            val = PICK_VALUES_BY_ROUND.get(rnd, 100)
+            result.append({"round": rnd, "year": yr, "value": val})
+        return result
+
+    output = []
+    for row, side_a_ids, side_b_ids in parsed_rows:
+        a_players = resolve_players(side_a_ids)
+        b_players = resolve_players(side_b_ids)
+        a_picks = parse_picks(row[5])
+        b_picks = parse_picks(row[6])
+
+        a_total = (row[7] or 0) or (
+            sum(p["value"] for p in a_players) + sum(p["value"] for p in a_picks)
+        )
+        b_total = (row[8] or 0) or (
+            sum(p["value"] for p in b_players) + sum(p["value"] for p in b_picks)
+        )
+
+        value_delta = round(a_total - b_total)
+        if value_delta > 500:
+            verdict = "A_WON"
+        elif value_delta < -500:
+            verdict = "B_WON"
+        else:
+            verdict = "FAIR"
+
+        output.append({
+            "transaction_id": row[0],
+            "week": row[1],
+            "season": row[2],
+            "side_a": {
+                "roster_id": row[9],
+                "owner_name": owner_names.get(row[9], f"Team {row[9]}"),
+                "players": a_players,
+                "picks": a_picks,
+                "total_value": round(a_total),
+            },
+            "side_b": {
+                "roster_id": row[10],
+                "owner_name": owner_names.get(row[10], f"Team {row[10]}"),
+                "players": b_players,
+                "picks": b_picks,
+                "total_value": round(b_total),
+            },
+            "value_delta": value_delta,
+            "verdict": verdict,
+            "created_at": row[11],
+        })
+
+    # Apply search filter (by player name, post-resolve)
+    if search:
+        needle = search.lower()
+        output = [
+            t for t in output
+            if any(needle in p["name"].lower() for p in t["side_a"]["players"])
+            or any(needle in p["name"].lower() for p in t["side_b"]["players"])
+        ]
+
+    return output
+
+
+# ---------------------------------------------------------------------------
+# Feature 3: Global Player Search
+# ---------------------------------------------------------------------------
+
+@router.get("/players/search")
+async def search_players(q: str = "", sport: str = "all"):
+    """Search football and baseball players by name. Returns top 20 per sport."""
+    if not q or len(q) < 2:
+        return {"football": [], "baseball": []}
+
+    pattern = f"%{q}%"
+    football_results = []
+    baseball_results = []
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        if sport in ("all", "football"):
+            async with db.execute(
+                "SELECT sleeper_id, name, position, team, value_sf, value_1qb "
+                "FROM players WHERE name LIKE ? "
+                "ORDER BY COALESCE(value_sf, value_1qb, 0) DESC LIMIT 20",
+                (pattern,),
+            ) as cur:
+                rows = await cur.fetchall()
+            for r in rows:
+                football_results.append({
+                    "id": r[0],
+                    "name": r[1],
+                    "position": r[2] or "",
+                    "team": r[3] or "FA",
+                    "value": r[4] or r[5] or 0,
+                    "sport": "football",
+                    "level": None,
+                })
+
+        if sport in ("all", "baseball"):
+            # Try baseball_players table — may not exist
+            try:
+                async with db.execute(
+                    "SELECT mlb_id, name, position, team, level "
+                    "FROM baseball_players WHERE name LIKE ? LIMIT 20",
+                    (pattern,),
+                ) as cur:
+                    rows = await cur.fetchall()
+                for r in rows:
+                    baseball_results.append({
+                        "id": r[0],
+                        "name": r[1],
+                        "position": r[2] or "",
+                        "team": r[3] or "",
+                        "value": None,
+                        "sport": "baseball",
+                        "level": r[4],
+                    })
+            except Exception:
+                pass  # table may not exist
+
+    return {"football": football_results, "baseball": baseball_results}
+
+
+# ---------------------------------------------------------------------------
+# Feature: Historical Roster Value Chart
+# ---------------------------------------------------------------------------
+
+@router.get("/portfolio/value-history")
+async def get_value_history(league_id: Optional[str] = None):
+    """Return daily total roster value over time for Marcus's roster(s).
+
+    If league_id is provided, returns data for that league only.
+    Otherwise combines all leagues (summing Marcus's roster values per date).
+    Returns [{date, total_value, player_count}, ...] ordered ascending.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        if league_id:
+            async with db.execute(
+                "SELECT league_id, my_roster_id, config_json FROM leagues WHERE league_id = ?",
+                (league_id,),
+            ) as cur:
+                league_rows = await cur.fetchall()
+        else:
+            async with db.execute(
+                "SELECT league_id, my_roster_id, config_json FROM leagues"
+            ) as cur:
+                league_rows = await cur.fetchall()
+
+        if not league_rows:
+            return []
+
+        league_roster_pairs = []
+        for r in league_rows:
+            lid = r[0]
+            config = json.loads(r[2] or "{}")
+            my_rid = config.get("my_roster_id", r[1])
+            league_roster_pairs.append((lid, my_rid))
+
+        all_owned: set = set()
+        league_owned: dict = {}
+
+        for lid, my_rid in league_roster_pairs:
+            async with db.execute(
+                "SELECT player_ids_json FROM rosters WHERE league_id=? AND roster_id=?",
+                (lid, my_rid),
+            ) as cur:
+                row = await cur.fetchone()
+            if row:
+                ids = set(json.loads(row[0] or "[]"))
+                league_owned[lid] = ids
+                all_owned.update(ids)
+
+        if not all_owned:
+            return []
+
+        placeholders = ",".join("?" * len(all_owned))
+        async with db.execute(
+            f"SELECT sleeper_id, snapshot_date, value_sf "
+            f"FROM player_snapshots "
+            f"WHERE sleeper_id IN ({placeholders}) "
+            f"ORDER BY snapshot_date ASC",
+            list(all_owned),
+        ) as cur:
+            snap_rows = await cur.fetchall()
+
+    if not snap_rows:
+        return []
+
+    if league_id and league_id in league_owned:
+        filter_ids = league_owned[league_id]
+    else:
+        filter_ids = all_owned
+
+    date_totals: dict = {}
+    for sleeper_id, snap_date, value_sf in snap_rows:
+        if sleeper_id not in filter_ids:
+            continue
+        v = value_sf or 0
+        if snap_date not in date_totals:
+            date_totals[snap_date] = {"total_value": 0.0, "player_count": 0}
+        date_totals[snap_date]["total_value"] += v
+        date_totals[snap_date]["player_count"] += 1
+
+    result = [
+        {
+            "date": date,
+            "total_value": round(entry["total_value"], 2),
+            "player_count": entry["player_count"],
+        }
+        for date, entry in sorted(date_totals.items())
+    ]
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Feature: Rookie Rankings
+# ---------------------------------------------------------------------------
+
+@router.get("/players/rookies")
+async def get_rookies(season: int = 2025):
+    """Return dynasty rookie rankings sorted by SF value.
+
+    Filters by years_exp <= 1 if the column exists, otherwise falls back to
+    age <= 23. Includes rank, positional rank, and rising badge.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("PRAGMA table_info(players)") as cur:
+            columns = {row[1] for row in await cur.fetchall()}
+
+        has_years_exp = "years_exp" in columns
+
+        if has_years_exp:
+            async with db.execute(
+                """
+                SELECT sleeper_id, name, position, team, value_sf, age,
+                       depth_chart_order, injury_status, trend_30d,
+                       COALESCE(years_exp, 0) as years_exp
+                FROM players
+                WHERE years_exp IS NOT NULL AND years_exp <= 1
+                  AND position IN ('QB','RB','WR','TE')
+                ORDER BY value_sf DESC
+                """,
+            ) as cur:
+                rows = await cur.fetchall()
+        else:
+            async with db.execute(
+                """
+                SELECT sleeper_id, name, position, team, value_sf, age,
+                       depth_chart_order, injury_status, trend_30d, 0 as years_exp
+                FROM players
+                WHERE age <= 23
+                  AND depth_chart_order IS NOT NULL
+                  AND position IN ('QB','RB','WR','TE')
+                ORDER BY value_sf DESC
+                """,
+            ) as cur:
+                rows = await cur.fetchall()
+
+        if not rows:
+            async with db.execute(
+                """
+                SELECT sleeper_id, name, position, team, value_sf, age,
+                       depth_chart_order, injury_status, trend_30d, 0 as years_exp
+                FROM players
+                WHERE age <= 24
+                  AND position IN ('QB','RB','WR','TE')
+                ORDER BY value_sf DESC
+                LIMIT 60
+                """,
+            ) as cur:
+                rows = await cur.fetchall()
+
+    if not rows:
+        return []
+
+    pos_rank_counters: dict = {}
+    result = []
+    overall_rank = 0
+    for r in rows:
+        sleeper_id, name, position, team, value_sf, age, depth, injury, trend_30d, years_exp = r
+        overall_rank += 1
+        pos = position or "WR"
+        pos_rank_counters[pos] = pos_rank_counters.get(pos, 0) + 1
+        positional_rank = f"{pos}{pos_rank_counters[pos]}"
+        is_rising = (trend_30d or 0) > 50
+
+        result.append({
+            "rank": overall_rank,
+            "sleeper_id": sleeper_id,
+            "name": name,
+            "position": pos,
+            "team": team or "FA",
+            "value_sf": value_sf or 0,
+            "age": age,
+            "depth_chart_order": depth,
+            "injury_status": injury,
+            "trend_30d": trend_30d or 0,
+            "positional_rank": positional_rank,
+            "is_rising": is_rising,
+            "years_exp": years_exp,
+        })
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Feature: Mock Draft Simulator
+# ---------------------------------------------------------------------------
+
+import uuid
+import random
+
+_DRAFT_SESSIONS: dict = {}
+
+
+class DraftStartRequest(BaseModel):
+    format: str = "SF"
+    teams: int = 12
+    rounds: int = 20
+    pick_position: int = 1
+
+
+class DraftPickRequest(BaseModel):
+    player_id: str
+
+
+@router.post("/draft/start")
+async def start_draft(req: DraftStartRequest):
+    """Create a new mock draft session. Returns draft_id and initial state."""
+    teams = max(8, min(16, req.teams))
+    rounds = max(10, min(30, req.rounds))
+    pick_position = max(1, min(teams, req.pick_position))
+    fmt = req.format.upper()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        value_col = "value_sf" if fmt == "SF" else "value_1qb"
+        async with db.execute(
+            f"SELECT sleeper_id, name, position, team, value_sf, value_1qb, age, depth_chart_order, injury_status "
+            f"FROM players "
+            f"WHERE position IN ('QB','RB','WR','TE','K') "
+            f"ORDER BY {value_col} DESC "
+            f"LIMIT 500"
+        ) as cur:
+            player_rows = await cur.fetchall()
+
+    players_pool = []
+    for r in player_rows:
+        value = (r[5] if fmt == "SF" else r[6]) or 0
+        players_pool.append({
+            "sleeper_id": r[0],
+            "name": r[1],
+            "position": r[2] or "WR",
+            "team": r[3] or "FA",
+            "value": value,
+            "age": r[7],
+            "depth_chart_order": r[8],
+            "injury_status": r[9],
+        })
+
+    pick_order = []
+    for rnd in range(1, rounds + 1):
+        if rnd % 2 == 1:
+            teams_this_round = list(range(1, teams + 1))
+        else:
+            teams_this_round = list(range(teams, 0, -1))
+        for pick_in_round, team_idx in enumerate(teams_this_round, 1):
+            overall = (rnd - 1) * teams + pick_in_round
+            pick_order.append({
+                "overall": overall,
+                "round": rnd,
+                "pick_in_round": pick_in_round,
+                "team": team_idx,
+                "is_marcus": team_idx == pick_position,
+                "player_id": None,
+                "player_name": None,
+                "player_position": None,
+            })
+
+    draft_id = str(uuid.uuid4())[:8]
+    _DRAFT_SESSIONS[draft_id] = {
+        "draft_id": draft_id,
+        "format": fmt,
+        "teams": teams,
+        "rounds": rounds,
+        "pick_position": pick_position,
+        "available": {p["sleeper_id"]: p for p in players_pool},
+        "pick_order": pick_order,
+        "current_pick_idx": 0,
+        "marcus_roster": [],
+        "ai_rosters": {t: [] for t in range(1, teams + 1) if t != pick_position},
+        "completed": False,
+    }
+
+    # AI auto-picks for all picks before Marcus's first turn
+    session = _DRAFT_SESSIONS[draft_id]
+    _advance_ai_picks(session)
+
+    return _get_draft_state(draft_id)
+
+
+def _get_draft_state(draft_id: str) -> dict:
+    session = _DRAFT_SESSIONS.get(draft_id)
+    if not session:
+        return {"error": "Draft session not found"}
+
+    pick_order = session["pick_order"]
+    current_idx = session["current_pick_idx"]
+    total_picks = len(pick_order)
+
+    current_pick = pick_order[current_idx] if current_idx < total_picks else None
+    next_picks = pick_order[current_idx:current_idx + 8] if current_idx < total_picks else []
+
+    available_sorted = sorted(
+        session["available"].values(),
+        key=lambda p: p["value"],
+        reverse=True,
+    )
+
+    return {
+        "draft_id": draft_id,
+        "format": session["format"],
+        "teams": session["teams"],
+        "rounds": session["rounds"],
+        "pick_position": session["pick_position"],
+        "current_pick": current_pick,
+        "current_pick_idx": current_idx,
+        "total_picks": total_picks,
+        "is_marcus_turn": current_pick["is_marcus"] if current_pick else False,
+        "marcus_roster": session["marcus_roster"],
+        "available_players": available_sorted[:100],
+        "next_picks": next_picks,
+        "completed": session["completed"],
+        "completed_picks": [p for p in pick_order if p["player_id"]],
+    }
+
+
+def _ai_pick(session: dict, team_idx: int):
+    """AI picks best available player with positional need weighting."""
+    if team_idx == session["pick_position"]:
+        ai_roster = session["marcus_roster"]
+    else:
+        ai_roster = session["ai_rosters"].get(team_idx, [])
+
+    pos_counts = {}
+    for p in ai_roster:
+        pos_counts[p["position"]] = pos_counts.get(p["position"], 0) + 1
+
+    pos_need = {
+        "QB": 1.5 if pos_counts.get("QB", 0) == 0 else 0.3,
+        "RB": 1.2 if pos_counts.get("RB", 0) < 3 else 0.8,
+        "WR": 1.2 if pos_counts.get("WR", 0) < 4 else 0.8,
+        "TE": 1.3 if pos_counts.get("TE", 0) == 0 else 0.5,
+        "K": 0.1,
+    }
+
+    available = list(session["available"].values())
+    if not available:
+        return None
+
+    scored = [
+        (p, p["value"] * pos_need.get(p["position"], 1.0) * random.uniform(0.85, 1.0))
+        for p in available
+    ]
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return scored[0][0] if scored else None
+
+
+def _advance_ai_picks(session: dict):
+    """Process AI picks until it is Marcus's turn or the draft ends."""
+    pick_order = session["pick_order"]
+    total = len(pick_order)
+
+    while session["current_pick_idx"] < total:
+        idx = session["current_pick_idx"]
+        pick = pick_order[idx]
+
+        if pick["is_marcus"]:
+            break
+
+        team_idx = pick["team"]
+        player = _ai_pick(session, team_idx)
+        if not player:
+            session["completed"] = True
+            break
+
+        session["available"].pop(player["sleeper_id"])
+        session["ai_rosters"].setdefault(team_idx, []).append(player)
+        pick["player_id"] = player["sleeper_id"]
+        pick["player_name"] = player["name"]
+        pick["player_position"] = player["position"]
+        session["current_pick_idx"] += 1
+
+    if session["current_pick_idx"] >= total:
+        session["completed"] = True
+
+
+@router.get("/draft/{draft_id}/state")
+async def get_draft_state(draft_id: str):
+    """Return current state of a draft session."""
+    if draft_id not in _DRAFT_SESSIONS:
+        raise HTTPException(status_code=404, detail="Draft session not found")
+    return _get_draft_state(draft_id)
+
+
+@router.post("/draft/{draft_id}/pick")
+async def make_pick(draft_id: str, req: DraftPickRequest):
+    """Marcus makes his pick. AI picks for all other teams until Marcus's next turn."""
+    if draft_id not in _DRAFT_SESSIONS:
+        raise HTTPException(status_code=404, detail="Draft session not found")
+
+    session = _DRAFT_SESSIONS[draft_id]
+    if session["completed"]:
+        raise HTTPException(status_code=400, detail="Draft is already completed")
+
+    current_idx = session["current_pick_idx"]
+    pick_order = session["pick_order"]
+    total = len(pick_order)
+
+    if current_idx >= total:
+        session["completed"] = True
+        return _get_draft_state(draft_id)
+
+    current_pick = pick_order[current_idx]
+    if not current_pick["is_marcus"]:
+        raise HTTPException(status_code=400, detail="It is not Marcus's turn")
+
+    player_id = req.player_id
+    if player_id not in session["available"]:
+        raise HTTPException(status_code=400, detail="Player not available")
+
+    player = session["available"].pop(player_id)
+    session["marcus_roster"].append(player)
+    pick_order[current_idx]["player_id"] = player_id
+    pick_order[current_idx]["player_name"] = player["name"]
+    pick_order[current_idx]["player_position"] = player["position"]
+    session["current_pick_idx"] += 1
+
+    _advance_ai_picks(session)
+
+    return _get_draft_state(draft_id)
+
+
+@router.post("/draft/{draft_id}/auto-pick")
+async def auto_pick(draft_id: str):
+    """AI picks for Marcus at current turn (best available by position need)."""
+    if draft_id not in _DRAFT_SESSIONS:
+        raise HTTPException(status_code=404, detail="Draft session not found")
+
+    session = _DRAFT_SESSIONS[draft_id]
+    if session["completed"]:
+        raise HTTPException(status_code=400, detail="Draft is already completed")
+
+    current_idx = session["current_pick_idx"]
+    pick_order = session["pick_order"]
+    total = len(pick_order)
+
+    if current_idx >= total:
+        session["completed"] = True
+        return _get_draft_state(draft_id)
+
+    current_pick = pick_order[current_idx]
+    if not current_pick["is_marcus"]:
+        raise HTTPException(status_code=400, detail="Not Marcus's turn")
+
+    player = _ai_pick(session, session["pick_position"])
+    if not player:
+        session["completed"] = True
+        return _get_draft_state(draft_id)
+
+    session["available"].pop(player["sleeper_id"])
+    session["marcus_roster"].append(player)
+    pick_order[current_idx]["player_id"] = player["sleeper_id"]
+    pick_order[current_idx]["player_name"] = player["name"]
+    pick_order[current_idx]["player_position"] = player["position"]
+    session["current_pick_idx"] += 1
+
+    _advance_ai_picks(session)
+
+    return _get_draft_state(draft_id)
