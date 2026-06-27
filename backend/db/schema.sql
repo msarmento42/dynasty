@@ -139,3 +139,43 @@ CREATE TABLE IF NOT EXISTS league_settings (
     raw_json TEXT,
     updated_at TEXT
 );
+
+-- Baseball module tables
+CREATE TABLE IF NOT EXISTS baseball_players (
+    mlb_id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    position TEXT,
+    team TEXT,
+    team_id INTEGER,
+    level TEXT,
+    sport_id INTEGER,
+    age INTEGER,
+    birth_date TEXT,
+    bats TEXT,
+    throws TEXT,
+    draft_year INTEGER,
+    service_years REAL,
+    debut_year INTEGER,
+    dynasty_value INTEGER DEFAULT 0,
+    updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS baseball_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mlb_id INTEGER,
+    season INTEGER,
+    sport_id INTEGER,
+    level TEXT,
+    stat_type TEXT,
+    stats_json TEXT,
+    UNIQUE(mlb_id, season, sport_id, stat_type)
+);
+
+CREATE TABLE IF NOT EXISTS baseball_rosters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    roster_name TEXT NOT NULL DEFAULT 'My Baseball Roster',
+    mlb_id INTEGER,
+    acquired_date TEXT,
+    notes TEXT,
+    UNIQUE(roster_name, mlb_id)
+);

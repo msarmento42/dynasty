@@ -1,140 +1,382 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import LeagueSelector from '../components/LeagueSelector.jsx';
 
-const API = '/api';
+const CURRENT_YEAR = new Date().getFullYear();
+const SEASONS = Array.from({ length: 5 }, (_, i) => CURRENT_YEAR - i);
 
-function ValueBadge({ winner, side, delta }) {
-  const isWinner = winner === side;
-  const isFair = winner === 'fair';
-  if (isFair) return <span className="th-badge th-badge--fair">FAIR</span>;
-  if (isWinner) return <span className="th-badge th-badge--win">WIN +{Math.abs(delta)}</span>;
-  return <span className="th-badge th-badge--loss">LOSS -{Math.abs(delta)}</span>;
-}
+const POS_COLORS = {
+  QB: { bg: '#e0f2fe', text: '#0369a1' },
+  RB: { bg: '#d1fae5', text: '#065f46' },
+  WR: { bg: '#fef3c7', text: '#92400e' },
+  TE: { bg: '#ede9fe', text: '#5b21b6' },
+};
 
-function PickLabel({ pick }) {
-  const round = pick.round ? `Round ${pick.round}` : 'Pick';
-  const year = pick.season || pick.year || '';
-  const orig = pick.original_owner_id ? ` (${pick.original_owner_id})` : '';
-  return <span className="th-pick">{year} {round}{orig}</span>;
-}
-
-function TradeSide({ side, sideKey, winner, delta }) {
+function PosBadge({ pos }) {
+  if (!pos) return null;
+  const colors = POS_COLORS[pos] || { bg: '#f3f4f6', text: '#374151' };
   return (
-    <div className="th-side">
-      <div className="th-owner">
-        {side.owner}
-        <ValueBadge winner={winner} side={sideKey} delta={delta} />
-      </div>
-      <div className="th-assets">
-        {side.players.map((p, i) => (
-          <span key={i} className={`th-player th-player--${(p.position || 'UNK').toLowerCase()}`}>
-            {p.name}
-            {p.position && <span className="th-pos">{p.position}</span>}
+    <span
+      style={{
+        background: colors.bg,
+        borderRadius: 4,
+        color: colors.text,
+        fontSize: 10,
+        fontWeight: 700,
+        padding: '2px 6px',
+        marginRight: 4,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {pos}
+    </span>
+  );
+}
+
+function VerdictBadge({ verdict, delta }) {
+  if (verdict === 'FAIR' || Math.abs(delta) < 100) {
+    return (
+      <span
+        style={{
+          background: '#f3f4f6',
+          borderRadius: 6,
+          color: '#374151',
+          fontSize: 12,
+          fontWeight: 600,
+          padding: '4px 10px',
+        }}
+      >
+        Even
+      </span>
+    );
+  }
+  const aWon = verdict === 'A_WON';
+  return (
+    <span
+      style={{
+        background: '#d1fae5',
+        borderRadius: 6,
+        color: '#065f46',
+        fontSize: 12,
+        fontWeight: 700,
+        padding: '4px 10px',
+      }}
+    >
+      {aWon ? 'A' : 'B'} won by {Number(Math.abs(delta)).toLocaleString()}
+    </span>
+  );
+}
+
+function PlayerList({ players, picks }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {players.map((p) => (
+        <div key={p.sleeper_id} style={{ alignItems: 'center', display: 'flex', gap: 6, fontSize: 13 }}>
+          <PosBadge pos={p.position} />
+          <span style={{ fontWeight: 500 }}>{p.name}</span>
+          {p.value > 0 && (
+            <span style={{ color: '#9ca3af', fontSize: 11, marginLeft: 'auto' }}>
+              {Number(p.value).toLocaleString()}
+            </span>
+          )}
+        </div>
+      ))}
+      {picks.map((pk, i) => (
+        <div key={i} style={{ alignItems: 'center', display: 'flex', gap: 6, fontSize: 13 }}>
+          <span
+            style={{
+              background: '#f3f4f6',
+              borderRadius: 4,
+              color: '#374151',
+              fontSize: 10,
+              fontWeight: 700,
+              padding: '2px 6px',
+              marginRight: 4,
+            }}
+          >
+            PICK
           </span>
-        ))}
-        {side.picks.map((pick, i) => (
-          <PickLabel key={i} pick={pick} />
-        ))}
-        {side.players.length === 0 && side.picks.length === 0 && (
-          <span className="th-empty">No assets</span>
-        )}
-      </div>
-      {side.total_value > 0 && (
-        <div className="th-value">Value: {side.total_value.toLocaleString()}</div>
+          <span style={{ color: '#667085' }}>
+            {pk.year ? `${pk.year} ` : ''}{pk.round ? `Round ${pk.round}` : 'Draft Pick'}
+          </span>
+          {pk.value > 0 && (
+            <span style={{ color: '#9ca3af', fontSize: 11, marginLeft: 'auto' }}>
+              {Number(pk.value).toLocaleString()}
+            </span>
+          )}
+        </div>
+      ))}
+      {players.length === 0 && picks.length === 0 && (
+        <span style={{ color: '#9ca3af', fontSize: 13 }}>No assets</span>
       )}
     </div>
   );
 }
 
 function TradeCard({ trade }) {
-  const date = trade.traded_at
-    ? new Date(typeof trade.traded_at === 'number'
-        ? trade.traded_at
-        : trade.traded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-    : `Week ${trade.week}, ${trade.season}`;
+  const dateStr = trade.created_at
+    ? new Date(trade.created_at).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      })
+    : '—';
 
   return (
-    <div className="th-card">
-      <div className="th-card-header">
-        <span className="th-date">{date}</span>
-        {trade.week && <span className="th-week">Week {trade.week}</span>}
+    <div
+      style={{
+        background: 'var(--bg-card, #fff)',
+        border: '1px solid var(--border-color, #d9dee7)',
+        borderRadius: 10,
+        overflow: 'hidden',
+      }}
+    >
+      {/* Header */}
+      <div
+        style={{
+          alignItems: 'center',
+          background: '#f9fafb',
+          borderBottom: '1px solid var(--border-color, #e4e7ec)',
+          display: 'flex',
+          gap: 12,
+          justifyContent: 'space-between',
+          padding: '10px 16px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ color: '#667085', fontSize: 12 }}>
+            {trade.season ? `${trade.season} Season` : ''}{trade.week ? ` · Week ${trade.week}` : ''}
+          </span>
+          <span style={{ color: '#d1d5db' }}>·</span>
+          <span style={{ color: '#9ca3af', fontSize: 12 }}>{dateStr}</span>
+        </div>
+        <VerdictBadge verdict={trade.verdict} delta={trade.value_delta} />
       </div>
-      <div className="th-sides">
-        <TradeSide side={trade.side_a} sideKey="side_a" winner={trade.winner} delta={Math.abs(trade.value_delta)} />
-        <div className="th-vs">⇄</div>
-        <TradeSide side={trade.side_b} sideKey="side_b" winner={trade.winner} delta={Math.abs(trade.value_delta)} />
+
+      {/* Sides */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 0 }}>
+        {/* Side A */}
+        <div style={{ padding: '14px 16px' }}>
+          <p
+            style={{
+              color: '#374151',
+              fontSize: 13,
+              fontWeight: 700,
+              margin: '0 0 10px',
+            }}
+          >
+            {trade.side_a.owner_name}
+            <span
+              style={{
+                background: '#e0f2fe',
+                borderRadius: 4,
+                color: '#0369a1',
+                fontSize: 10,
+                fontWeight: 700,
+                marginLeft: 8,
+                padding: '2px 6px',
+              }}
+            >
+              RECEIVED
+            </span>
+          </p>
+          <PlayerList players={trade.side_a.players} picks={trade.side_a.picks} />
+          <p style={{ color: '#6b7280', fontSize: 12, fontWeight: 600, margin: '10px 0 0' }}>
+            Total: {Number(trade.side_a.total_value).toLocaleString()}
+          </p>
+        </div>
+
+        {/* VS divider */}
+        <div
+          style={{
+            alignItems: 'center',
+            borderLeft: '1px solid var(--border-color, #e4e7ec)',
+            borderRight: '1px solid var(--border-color, #e4e7ec)',
+            color: '#9ca3af',
+            display: 'flex',
+            fontSize: 11,
+            fontWeight: 700,
+            padding: '0 12px',
+          }}
+        >
+          VS
+        </div>
+
+        {/* Side B */}
+        <div style={{ padding: '14px 16px' }}>
+          <p
+            style={{
+              color: '#374151',
+              fontSize: 13,
+              fontWeight: 700,
+              margin: '0 0 10px',
+            }}
+          >
+            {trade.side_b.owner_name}
+            <span
+              style={{
+                background: '#e0f2fe',
+                borderRadius: 4,
+                color: '#0369a1',
+                fontSize: 10,
+                fontWeight: 700,
+                marginLeft: 8,
+                padding: '2px 6px',
+              }}
+            >
+              RECEIVED
+            </span>
+          </p>
+          <PlayerList players={trade.side_b.players} picks={trade.side_b.picks} />
+          <p style={{ color: '#6b7280', fontSize: 12, fontWeight: 600, margin: '10px 0 0' }}>
+            Total: {Number(trade.side_b.total_value).toLocaleString()}
+          </p>
+        </div>
       </div>
     </div>
   );
 }
 
 export default function TradeHistory() {
-  const [leagues, setLeagues] = useState([]);
-  const [leagueId, setLeagueId] = useState('');
-  const [trades, setTrades] = useState([]);
+  const [trades, setTrades] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [season, setSeason] = useState('');
+  const [leagueId, setLeagueId] = useState('');
 
-  useEffect(() => {
-    fetch(`${API}/fantasy/leagues`)
-      .then(r => r.json())
-      .then(data => {
-        const list = Array.isArray(data) ? data : (data.leagues || []);
-        setLeagues(list);
-        if (list.length > 0) setLeagueId(list[0].league_id);
-      })
-      .catch(() => setError('Failed to load leagues'));
-  }, []);
-
-  useEffect(() => {
-    if (!leagueId) return;
+  const load = useCallback(async (selectedLeagueId, searchVal, seasonVal) => {
+    if (!selectedLeagueId) return;
     setLoading(true);
     setError('');
-    fetch(`${API}/fantasy/league/${leagueId}/trade-history?limit=50`)
-      .then(r => r.json())
-      .then(data => {
-        setTrades(data.trades || []);
-        setLoading(false);
-      })
-      .catch(() => {
-        setError('Failed to load trade history');
-        setLoading(false);
-      });
-  }, [leagueId]);
+    try {
+      const params = new URLSearchParams();
+      if (searchVal) params.set('search', searchVal);
+      if (seasonVal) params.set('season', seasonVal);
+      params.set('limit', '100');
+      const res = await fetch(`/fantasy/league/${selectedLeagueId}/trade-history?${params}`);
+      if (!res.ok) throw new Error('Unable to load trade history');
+      setTrades(await res.json());
+    } catch (err) {
+      setError(err.message);
+      setTrades(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const handleLeagueSelect = useCallback(
+    (id) => {
+      setLeagueId(id);
+      load(id, search, season);
+    },
+    [load, search, season],
+  );
+
+  const handleSearch = (val) => {
+    setSearch(val);
+    load(leagueId, val, season);
+  };
+
+  const handleSeason = (val) => {
+    setSeason(val);
+    load(leagueId, search, val);
+  };
 
   return (
-    <div className="th-root">
-      <div className="page-header">
-        <h2>Trade History</h2>
-        {leagues.length > 1 && (
+    <main style={{ background: 'var(--bg-primary, #f6f7fb)', minHeight: '100vh', padding: 24 }}>
+      <section style={{ margin: '0 auto', maxWidth: 1000 }}>
+        <div style={{ display: 'grid', gap: 18, marginBottom: 24 }}>
+          <h1 style={{ margin: 0, color: 'var(--text-primary, #1a1a2e)' }}>Trade History</h1>
+          <p style={{ color: 'var(--text-secondary, #667085)', margin: 0 }}>
+            Browse all trades in this league with dynasty value analysis.
+          </p>
+          <LeagueSelector onSelect={handleLeagueSelect} />
+        </div>
+
+        {/* Filters */}
+        <div
+          style={{
+            alignItems: 'center',
+            background: 'var(--bg-card, #fff)',
+            border: '1px solid var(--border-color, #d9dee7)',
+            borderRadius: 8,
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 12,
+            marginBottom: 20,
+            padding: '12px 16px',
+          }}
+        >
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => handleSearch(e.target.value)}
+            placeholder="Search by player name..."
+            style={{
+              background: 'var(--bg-secondary, #f9fafb)',
+              border: '1px solid var(--border-color, #d1d5db)',
+              borderRadius: 6,
+              color: 'var(--text-primary, #111)',
+              fontSize: 14,
+              flex: '1 1 220px',
+              padding: '8px 12px',
+            }}
+          />
           <select
-            className="league-select"
-            value={leagueId}
-            onChange={e => setLeagueId(e.target.value)}
+            value={season}
+            onChange={(e) => handleSeason(e.target.value)}
+            style={{
+              background: 'var(--bg-secondary, #f9fafb)',
+              border: '1px solid var(--border-color, #d1d5db)',
+              borderRadius: 6,
+              color: 'var(--text-primary, #111)',
+              fontSize: 14,
+              padding: '8px 12px',
+            }}
           >
-            {leagues.map(l => (
-              <option key={l.league_id} value={l.league_id}>{l.name}</option>
+            <option value="">All Seasons</option>
+            {SEASONS.map((yr) => (
+              <option key={yr} value={yr}>
+                {yr}
+              </option>
             ))}
           </select>
-        )}
-      </div>
-
-      {loading && <p className="th-status">Loading trades…</p>}
-      {error && <p className="th-status th-status--error">{error}</p>}
-
-      {!loading && !error && trades.length === 0 && (
-        <p className="th-status">No trades found for this league. Run a sync to populate trade history.</p>
-      )}
-
-      {!loading && trades.length > 0 && (
-        <div className="th-timeline">
-          {trades.map(trade => (
-            <div key={trade.trade_id} className="th-timeline-item">
-              <div className="th-connector" />
-              <TradeCard trade={trade} />
-            </div>
-          ))}
+          {trades && (
+            <span style={{ color: '#9ca3af', fontSize: 13, marginLeft: 'auto' }}>
+              {trades.length} trade{trades.length !== 1 ? 's' : ''}
+            </span>
+          )}
         </div>
-      )}
-    </div>
+
+        {loading && <p style={{ color: 'var(--text-secondary, #667085)' }}>Loading trades...</p>}
+        {error && (
+          <div
+            style={{
+              background: '#fef3f2',
+              border: '1px solid #fda29b',
+              borderRadius: 8,
+              color: '#b42318',
+              padding: 16,
+            }}
+          >
+            <strong>Error:</strong> {error}
+          </div>
+        )}
+
+        {trades && !loading && trades.length === 0 && (
+          <p style={{ color: '#667085', textAlign: 'center', marginTop: 40 }}>
+            No trades found{search ? ` for "${search}"` : ''}.
+          </p>
+        )}
+
+        {trades && !loading && trades.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {trades.map((trade) => (
+              <TradeCard key={trade.transaction_id} trade={trade} />
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
   );
 }

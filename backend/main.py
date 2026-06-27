@@ -9,17 +9,19 @@ try:
     from backend.routers import fantasy
     from backend.routers import playoff_simulator
     from backend.routers import pick_calculator
+    from backend.routers import baseball
 except ModuleNotFoundError:
     from database import init_db
     from routers import fantasy
     from routers import playoff_simulator
     from routers import pick_calculator
+    from routers import baseball
 
 app = FastAPI(title="Dynasty Calculator")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -27,6 +29,7 @@ app.add_middleware(
 app.include_router(fantasy.router, prefix="/fantasy")
 app.include_router(playoff_simulator.router, prefix="/api/playoff")
 app.include_router(pick_calculator.router, prefix="/api/picks")
+app.include_router(baseball.router)
 
 
 @app.on_event("startup")

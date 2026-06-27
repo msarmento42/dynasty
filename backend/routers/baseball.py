@@ -1,0 +1,193 @@
+"""Baseball module — MLB Stats API endpoints + manual dynasty roster management."""
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+
+import aiosqlite
+from fastapi import APIRouter, HTTPException, Query
+
+from backend.database import DB_PATH
+from backend.services.mlb_stats import (
+    get_player,
+    get_player_career,
+    get_prospects,
+    search_players,
+)
+
+router = APIRouter(prefix="/api/baseball", tags=["baseball"])
+
+
+# ---------------------------------------------------------------------------
+# Player search & profiles
+# ---------------------------------------------------------------------------
+
+@router.get("/players/search")
+async def search_baseball_players(q: str = Query("", min_length=0), limit: int = 20):
+    """Search MLB/MiLB player universe by name."""
+    if not q or len(q) < 2:
+        return {"players": [], "query": q}
+    try:
+        players = await search_players(q, limit=limit)
+        return {"players": players, "query": q, "count": len(players)}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"MLB API error: {exc}") from exc
+
+
+@router.get("/players/{mlb_id}")
+async def get_baseball_player(mlb_id: int):
+    """Full player profile: bio + career stats by level."""
+    try:
+        bio = await get_player(mlb_id)
+        if not bio:
+            raise HTTPException(status_code=404, detail=f"Player {mlb_id} not found")
+        career = await get_player_career(mlb_id)
+        return {"player": bio, "career": career}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"MLB API error: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Prospects
+# ---------------------------------------------------------------------------
+
+@router.get("/prospects")
+async def get_prospect_list(limit: int = Query(200, ge=1, le=1000)):
+    """All active minor leaguers sorted by level (AAA first)."""
+    try:
+        prospects = await get_prospects(limit=limit)
+        return {"prospects": prospects, "count": len(prospects)}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"MLB API error: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Dynasty Roster (manually managed)
+# ---------------------------------------------------------------------------
+
+@router.get("/roster")
+async def get_baseball_roster(roster_name: str = "My Baseball Roster"):
+    """Get Marcus's manually managed baseball dynasty roster."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT r.mlb_id, r.acquired_date, r.notes,
+                   p.name, p.position, p.team, p.level, p.age, p.sport_id,
+                   p.bats, p.throws, p.draft_year, p.debut_year, p.dynasty_value
+            FROM baseball_rosters r
+            LEFT JOIN baseball_players p ON p.mlb_id = r.mlb_id
+            WHERE r.roster_name = ?
+            ORDER BY p.position, p.name
+            """,
+            (roster_name,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+    players = []
+    for row in rows:
+        players.append({
+            "mlb_id": row["mlb_id"],
+            "name": row["name"],
+            "position": row["position"],
+            "team": row["team"],
+            "level": row["level"],
+            "age": row["age"],
+            "bats": row["bats"],
+            "throws": row["throws"],
+            "draft_year": row["draft_year"],
+            "debut_year": row["debut_year"],
+            "dynasty_value": row["dynasty_value"],
+            "acquired_date": row["acquired_date"],
+            "notes": row["notes"],
+        })
+
+    return {"roster_name": roster_name, "players": players, "count": len(players)}
+
+
+@router.post("/roster/{mlb_id}")
+async def add_to_roster(mlb_id: int, roster_name: str = "My Baseball Roster", notes: str = ""):
+    """Add a player to the baseball dynasty roster. Fetches bio from MLB API."""
+    # Fetch player info and cache in baseball_players
+    try:
+        bio = await get_player(mlb_id)
+        if not bio:
+            raise HTTPException(status_code=404, detail=f"Player {mlb_id} not found in MLB API")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"MLB API error: {exc}") from exc
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Upsert player bio into baseball_players cache
+        await db.execute(
+            """
+            INSERT INTO baseball_players
+                (mlb_id, name, position, team, team_id, level, sport_id, age,
+                 birth_date, bats, throws, draft_year, debut_year, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(mlb_id) DO UPDATE SET
+                name=excluded.name, position=excluded.position,
+                team=excluded.team, team_id=excluded.team_id,
+                level=excluded.level, sport_id=excluded.sport_id,
+                age=excluded.age, birth_date=excluded.birth_date,
+                bats=excluded.bats, throws=excluded.throws,
+                draft_year=excluded.draft_year, debut_year=excluded.debut_year,
+                updated_at=excluded.updated_at
+            """,
+            (
+                bio["mlb_id"], bio["name"], bio["position"], bio["team"],
+                bio.get("team_id"), bio["level"], bio.get("sport_id", 1),
+                bio.get("age"), bio.get("birth_date", ""),
+                bio.get("bats", ""), bio.get("throws", ""),
+                bio.get("draft_year"), bio.get("debut_year"), now,
+            ),
+        )
+        # Add to roster
+        try:
+            await db.execute(
+                """
+                INSERT INTO baseball_rosters (roster_name, mlb_id, acquired_date, notes)
+                VALUES (?, ?, ?, ?)
+                """,
+                (roster_name, mlb_id, now[:10], notes),
+            )
+        except aiosqlite.IntegrityError:
+            raise HTTPException(status_code=409, detail=f"Player {mlb_id} already on roster '{roster_name}'")
+        await db.commit()
+
+    return {"status": "added", "mlb_id": mlb_id, "name": bio["name"], "roster_name": roster_name}
+
+
+@router.delete("/roster/{mlb_id}")
+async def remove_from_roster(mlb_id: int, roster_name: str = "My Baseball Roster"):
+    """Remove a player from the baseball dynasty roster."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        result = await db.execute(
+            "DELETE FROM baseball_rosters WHERE roster_name = ? AND mlb_id = ?",
+            (roster_name, mlb_id),
+        )
+        await db.commit()
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail=f"Player {mlb_id} not found on roster '{roster_name}'")
+
+    return {"status": "removed", "mlb_id": mlb_id, "roster_name": roster_name}
+
+
+@router.patch("/roster/{mlb_id}/notes")
+async def update_roster_notes(mlb_id: int, notes: str, roster_name: str = "My Baseball Roster"):
+    """Update notes for a player on the roster."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        result = await db.execute(
+            "UPDATE baseball_rosters SET notes = ? WHERE roster_name = ? AND mlb_id = ?",
+            (notes, roster_name, mlb_id),
+        )
+        await db.commit()
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail=f"Player {mlb_id} not on roster '{roster_name}'")
+
+    return {"status": "updated", "mlb_id": mlb_id, "notes": notes}
