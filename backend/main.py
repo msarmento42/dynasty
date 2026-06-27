@@ -21,7 +21,7 @@ app = FastAPI(title="Dynasty Calculator")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
 )
