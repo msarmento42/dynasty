@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
+import PositionalImpactDisplay from '../components/PositionalImpactDisplay.jsx';
 import VerdictChip from '../components/VerdictChip.jsx';
 
 function playerLabel(player) {
@@ -225,6 +226,7 @@ export default function TradeBuilder() {
                 <strong>Side B: {Number(result.side_b_value || 0).toLocaleString()}</strong>
                 <ValueList title="You send" players={valuesForSide(result, 'side_a_players', sideA)} />
                 <ValueList title="You receive" players={valuesForSide(result, 'side_b_players', sideB)} />
+                <PositionalImpactDisplay impact={result.positional_impact} />
                 <p>
                   Delta: {Number(result.delta || 0).toLocaleString()} ({Number(result.delta_pct || 0).toFixed(1)}%)
                 </p>

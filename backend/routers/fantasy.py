@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from backend.database import DB_PATH
 from backend.scripts import daily_sync
-from backend.services.fantasy_engine import LEAGUE_CONFIG, enrich_player, pick_value
+from backend.services.fantasy_engine import LEAGUE_CONFIG, enrich_player, pick_value, trade_positional_impact
 from backend.services.proposals import generate_proposals
 from backend.services import sleeper as sleeper_svc
 
@@ -244,6 +244,7 @@ async def evaluate_trade(req: TradeRequest):
         "side_b_players": side_b_players,
         "side_a_picks": side_a_picks,
         "side_b_picks": side_b_picks,
+        "positional_impact": trade_positional_impact(side_a_players, side_b_players),
     }
 
 
