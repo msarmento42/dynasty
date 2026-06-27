@@ -105,3 +105,9 @@ async def get_my_roster_players(league_id: str) -> list[str]:
             players = roster.get("players") or []
             return [str(player_id) for player_id in players]
     return []
+
+
+async def fetch_league_info(league_id: str) -> dict[str, Any]:
+    """Fetch full league info from Sleeper (includes scoring_settings + roster_positions)."""
+    data = await _get_json(f"/league/{league_id}")
+    return data if isinstance(data, dict) else {}
