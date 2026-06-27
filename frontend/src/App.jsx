@@ -4,6 +4,7 @@ import TradeBuilder from './pages/TradeBuilder.jsx';
 import Proposals from './pages/Proposals.jsx';
 import Playoffs from './pages/Playoffs.jsx';
 import PlayerProfile from './pages/PlayerProfile.jsx';
+import PickCalculator from './pages/PickCalculator.jsx';
 
 export default function App() {
   return (
@@ -13,6 +14,7 @@ export default function App() {
         <Link to="/trade">Trade Builder</Link>
         <Link to="/proposals">Proposals</Link>
         <Link to="/playoffs">Playoffs</Link>
+        <Link to="/picks">Pick Calculator</Link>
       </nav>
       <Routes>
         <Route path="/" element={<Roster />} />
@@ -20,6 +22,7 @@ export default function App() {
         <Route path="/proposals" element={<Proposals />} />
         <Route path="/playoffs" element={<Playoffs />} />
         <Route path="/players/:playerId" element={<PlayerProfile />} />
+        <Route path="/picks" element={<PickCalculator />} />
       </Routes>
     </BrowserRouter>
   );
