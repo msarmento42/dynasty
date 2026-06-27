@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import random
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
@@ -1346,7 +1348,11 @@ async def get_value_movers():
             latest_rows = await cur.fetchall()
 
         if not latest_rows:
-            return {"gainers": [], "losers": [], "note": "No snapshot data yet — snapshots are recorded during daily sync."}
+            return {
+                "gainers": [],
+                "losers": [],
+                "note": "No snapshot data yet — snapshots are recorded during daily sync.",
+            }
 
         latest = {r[0]: {"value": r[1], "date": r[2]} for r in latest_rows}
 
@@ -1388,7 +1394,11 @@ async def get_value_movers():
             })
 
         if not movers:
-            return {"gainers": [], "losers": [], "note": "Not enough historical snapshots yet (need at least 7 days of data)."}
+            return {
+                "gainers": [],
+                "losers": [],
+                "note": "Not enough historical snapshots yet (need at least 7 days of data).",
+            }
 
         # Enrich with player info
         all_ids = [m["sleeper_id"] for m in movers]
@@ -1950,9 +1960,6 @@ async def get_rookies(season: int = 2025):
 # ---------------------------------------------------------------------------
 # Feature: Mock Draft Simulator
 # ---------------------------------------------------------------------------
-
-import uuid
-import random
 
 _DRAFT_SESSIONS: dict = {}
 

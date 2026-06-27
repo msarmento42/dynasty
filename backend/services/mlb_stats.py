@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import httpx
-from typing import Optional
 
 MLB_API = "https://statsapi.mlb.com/api/v1"
 DEFAULT_TIMEOUT = 20.0
