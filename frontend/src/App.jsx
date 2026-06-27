@@ -8,6 +8,10 @@ import PlayerProfile from './pages/PlayerProfile.jsx';
 import PickCalculator from './pages/PickCalculator.jsx';
 import TeamNeeds from './pages/TeamNeeds.jsx';
 import Exposure from './pages/Exposure.jsx';
+import News from './pages/News.jsx';
+import Movers from './pages/Movers.jsx';
+import StartSit from './pages/StartSit.jsx';
+import WaiverWire from './pages/WaiverWire.jsx';
 
 export default function App() {
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('darkMode') === 'true');
@@ -31,6 +35,10 @@ export default function App() {
         <Link to="/picks">Pick Calculator</Link>
         <Link to="/team-needs">Team Needs</Link>
         <Link to="/exposure">Exposure</Link>
+        <Link to="/news">News</Link>
+        <Link to="/movers">Movers</Link>
+        <Link to="/start-sit">Start/Sit</Link>
+        <Link to="/waiver">Waiver Wire</Link>
         <button
           className="dark-mode-toggle"
           onClick={() => setDarkMode((prev) => !prev)}
@@ -49,6 +57,10 @@ export default function App() {
         <Route path="/picks" element={<PickCalculator />} />
         <Route path="/team-needs" element={<TeamNeeds />} />
         <Route path="/exposure" element={<Exposure />} />
+        <Route path="/news" element={<News />} />
+        <Route path="/movers" element={<Movers />} />
+        <Route path="/start-sit" element={<StartSit />} />
+        <Route path="/waiver" element={<WaiverWire />} />
       </Routes>
     </BrowserRouter>
   );
