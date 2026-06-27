@@ -7,6 +7,7 @@ import Playoffs from './pages/Playoffs.jsx';
 import PlayerProfile from './pages/PlayerProfile.jsx';
 import PickCalculator from './pages/PickCalculator.jsx';
 import TeamNeeds from './pages/TeamNeeds.jsx';
+import Exposure from './pages/Exposure.jsx';
 
 export default function App() {
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('darkMode') === 'true');
@@ -29,6 +30,7 @@ export default function App() {
         <Link to="/playoffs">Playoffs</Link>
         <Link to="/picks">Pick Calculator</Link>
         <Link to="/team-needs">Team Needs</Link>
+        <Link to="/exposure">Exposure</Link>
         <button
           className="dark-mode-toggle"
           onClick={() => setDarkMode((prev) => !prev)}
@@ -46,6 +48,7 @@ export default function App() {
         <Route path="/players/:playerId" element={<PlayerProfile />} />
         <Route path="/picks" element={<PickCalculator />} />
         <Route path="/team-needs" element={<TeamNeeds />} />
+        <Route path="/exposure" element={<Exposure />} />
       </Routes>
     </BrowserRouter>
   );
