@@ -13,6 +13,7 @@ from backend.database import DB_PATH
 from backend.scripts import daily_sync
 from backend.services.fantasy_engine import LEAGUE_CONFIG, enrich_player, pick_value
 from backend.services.proposals import generate_proposals
+from backend.services import sleeper as sleeper_svc
 
 router = APIRouter()
 
@@ -609,3 +610,383 @@ async def get_player_profile(player_id: str):
         "recent_stats": recent_stats,
         "comparable_players": comparable_players,
     }
+
+
+@router.get("/portfolio/exposure")
+async def get_portfolio_exposure():
+    """Return per-player exposure across all leagues Marcus owns a roster in."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        # 1. Fetch all leagues
+        async with db.execute(
+            "SELECT league_id, name, n_teams, format, my_roster_id, config_json FROM leagues"
+        ) as cur:
+            league_rows = await cur.fetchall()
+
+        if not league_rows:
+            return {"total_leagues": 0, "players": [], "by_position": {}}
+
+        leagues = [
+            {
+                "league_id": r[0],
+                "name": r[1],
+                "n_teams": r[2],
+                "format": r[3],
+                "my_roster_id": json.loads(r[5] or "{}").get("my_roster_id", r[4]),
+            }
+            for r in league_rows
+        ]
+        total_leagues = len(leagues)
+
+        # 2. For each league, find Marcus's roster player IDs
+        player_league_map: dict = {}  # sleeper_id -> [league_name, ...]
+
+        for league in leagues:
+            league_id = league["league_id"]
+            my_roster_id = league["my_roster_id"]
+            async with db.execute(
+                "SELECT player_ids_json FROM rosters WHERE league_id=? AND roster_id=?",
+                (league_id, my_roster_id),
+            ) as cur:
+                row = await cur.fetchone()
+            if not row:
+                continue
+            player_ids = json.loads(row[0] or "[]")
+            for pid in player_ids:
+                if pid not in player_league_map:
+                    player_league_map[pid] = []
+                player_league_map[pid].append(league["name"])
+
+        if not player_league_map:
+            return {"total_leagues": total_leagues, "players": [], "by_position": {}}
+
+        # 3. Fetch player details for all owned players
+        all_player_ids = list(player_league_map.keys())
+        placeholders = ",".join("?" * len(all_player_ids))
+        async with db.execute(
+            f"SELECT sleeper_id, name, position, team, age, value_sf, value_1qb, trend_30d, injury_status "
+            f"FROM players WHERE sleeper_id IN ({placeholders})",
+            all_player_ids,
+        ) as cur:
+            player_rows = await cur.fetchall()
+
+    # 4. Build exposure records
+    players_out = []
+    for r in player_rows:
+        sleeper_id = r[0]
+        leagues_owned = player_league_map.get(sleeper_id, [])
+        leagues_count = len(leagues_owned)
+        exposure_pct = round((leagues_count / total_leagues) * 100, 1)
+
+        # Use SF value if available, fall back to 1QB
+        dynasty_value = r[5] or r[6] or 0
+
+        players_out.append({
+            "sleeper_id": sleeper_id,
+            "player_name": r[1],
+            "position": r[2] or "Unknown",
+            "team": r[3] or "FA",
+            "age": r[4],
+            "dynasty_value": dynasty_value,
+            "leagues_owned": leagues_owned,
+            "leagues_count": leagues_count,
+            "exposure_pct": exposure_pct,
+            "total_leagues": total_leagues,
+        })
+
+    # 5. Sort: exposure_pct desc, then dynasty_value desc
+    players_out.sort(key=lambda p: (-p["exposure_pct"], -p["dynasty_value"]))
+
+    # 6. Group by position
+    by_position = {}
+    for p in players_out:
+        pos = p["position"]
+        if pos not in by_position:
+            by_position[pos] = []
+        by_position[pos].append(p)
+
+    return {
+        "total_leagues": total_leagues,
+        "league_names": [lg["name"] for lg in leagues],
+        "players": players_out,
+        "by_position": by_position,
+    }
+
+
+# ── League Settings Auto-Detector (#64) ───────────────────────────────────────
+
+def _parse_league_settings(league_data: dict) -> dict:
+    """Parse Sleeper league JSON into structured scoring/format settings."""
+    roster_positions = league_data.get("roster_positions") or []
+    scoring = league_data.get("scoring_settings") or {}
+
+    is_superflex = "SUPER_FLEX" in roster_positions
+    qb_slots = roster_positions.count("QB")
+    is_te_premium = float(scoring.get("bonus_rec_te", 0) or 0) > 0
+
+    rec = float(scoring.get("rec", 0) or 0)
+    if rec >= 1.0:
+        rec_format = "PPR"
+    elif rec >= 0.5:
+        rec_format = "0.5PPR"
+    else:
+        rec_format = "0PPR"
+
+    format_label = "SF" if is_superflex else "1QB"
+
+    return {
+        "is_superflex": is_superflex,
+        "is_te_premium": is_te_premium,
+        "qb_slots": qb_slots,
+        "rec_format": rec_format,
+        "format_label": format_label,
+    }
+
+
+async def _ensure_league_settings_table(db: aiosqlite.Connection) -> None:
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS league_settings (
+            league_id TEXT PRIMARY KEY,
+            league_name TEXT,
+            is_superflex INTEGER DEFAULT 0,
+            is_te_premium INTEGER DEFAULT 0,
+            qb_slots INTEGER DEFAULT 1,
+            rec_format TEXT DEFAULT 'PPR',
+            format_label TEXT DEFAULT '1QB',
+            raw_json TEXT,
+            updated_at TEXT
+        )
+        """
+    )
+
+
+@router.get("/leagues/settings")
+async def get_leagues_settings():
+    """
+    Auto-detect scoring format for every known league from the Sleeper API.
+    Detects: SF vs 1QB, TE Premium, PPR/0.5PPR/0PPR.
+    Results are cached in the league_settings table and returned immediately.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    results = []
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await _ensure_league_settings_table(db)
+        await db.commit()
+
+        for league_id, cfg in LEAGUE_CONFIG.items():
+            try:
+                league_data = await sleeper_svc.fetch_league_info(league_id)
+            except Exception:
+                league_data = {}
+
+            parsed = _parse_league_settings(league_data)
+            league_name = league_data.get("name") or cfg.get("name", league_id)
+
+            await db.execute(
+                """
+                INSERT INTO league_settings
+                    (league_id, league_name, is_superflex, is_te_premium, qb_slots,
+                     rec_format, format_label, raw_json, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(league_id) DO UPDATE SET
+                    league_name=excluded.league_name,
+                    is_superflex=excluded.is_superflex,
+                    is_te_premium=excluded.is_te_premium,
+                    qb_slots=excluded.qb_slots,
+                    rec_format=excluded.rec_format,
+                    format_label=excluded.format_label,
+                    raw_json=excluded.raw_json,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    league_id,
+                    league_name,
+                    int(parsed["is_superflex"]),
+                    int(parsed["is_te_premium"]),
+                    parsed["qb_slots"],
+                    parsed["rec_format"],
+                    parsed["format_label"],
+                    json.dumps(league_data),
+                    now,
+                ),
+            )
+
+            results.append(
+                {
+                    "league_id": league_id,
+                    "league_name": league_name,
+                    "format_label": parsed["format_label"],
+                    "is_superflex": parsed["is_superflex"],
+                    "is_te_premium": parsed["is_te_premium"],
+                    "qb_slots": parsed["qb_slots"],
+                    "rec_format": parsed["rec_format"],
+                }
+            )
+
+        await db.commit()
+
+    return results
+
+
+@router.get("/league/{league_id}/settings")
+async def get_league_settings(league_id: str):
+    """Return cached scoring settings for a single league; fetches from Sleeper if not cached."""
+    now = datetime.now(timezone.utc).isoformat()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await _ensure_league_settings_table(db)
+
+        async with db.execute(
+            """
+            SELECT league_id, league_name, is_superflex, is_te_premium,
+                   qb_slots, rec_format, format_label
+            FROM league_settings WHERE league_id=?
+            """,
+            (league_id,),
+        ) as cur:
+            row = await cur.fetchone()
+
+        if row:
+            return {
+                "league_id": row[0],
+                "league_name": row[1],
+                "is_superflex": bool(row[2]),
+                "is_te_premium": bool(row[3]),
+                "qb_slots": row[4],
+                "rec_format": row[5],
+                "format_label": row[6],
+            }
+
+        # Not cached — fetch from Sleeper now
+        cfg = LEAGUE_CONFIG.get(league_id, {})
+        try:
+            league_data = await sleeper_svc.fetch_league_info(league_id)
+        except Exception:
+            league_data = {}
+
+        parsed = _parse_league_settings(league_data)
+        league_name = league_data.get("name") or cfg.get("name", league_id)
+
+        await db.execute(
+            """
+            INSERT INTO league_settings
+                (league_id, league_name, is_superflex, is_te_premium, qb_slots,
+                 rec_format, format_label, raw_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(league_id) DO UPDATE SET
+                league_name=excluded.league_name,
+                is_superflex=excluded.is_superflex,
+                is_te_premium=excluded.is_te_premium,
+                qb_slots=excluded.qb_slots,
+                rec_format=excluded.rec_format,
+                format_label=excluded.format_label,
+                raw_json=excluded.raw_json,
+                updated_at=excluded.updated_at
+            """,
+            (
+                league_id,
+                league_name,
+                int(parsed["is_superflex"]),
+                int(parsed["is_te_premium"]),
+                parsed["qb_slots"],
+                parsed["rec_format"],
+                parsed["format_label"],
+                json.dumps(league_data),
+                now,
+            ),
+        )
+        await db.commit()
+
+    return {
+        "league_id": league_id,
+        "league_name": league_name,
+        "is_superflex": parsed["is_superflex"],
+        "is_te_premium": parsed["is_te_premium"],
+        "qb_slots": parsed["qb_slots"],
+        "rec_format": parsed["rec_format"],
+        "format_label": parsed["format_label"],
+    }
+
+
+@router.get("/league/{league_id}/team-needs")
+async def get_team_needs(league_id: str):
+    """Return positional strength grades (0-100) for every team in the league.
+
+    Grades are computed by normalising each team's total dynasty value at each
+    position against the maximum value held by any team at that position.
+    Picks are valued by counting them and scaling against the most pick-rich team.
+    """
+    POSITIONS = ["QB", "RB", "WR", "TE"]
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        league = await get_league_row(db, league_id)
+
+        async with db.execute(
+            "SELECT roster_id, owner_display_name, player_ids_json "
+            "FROM rosters WHERE league_id=? ORDER BY roster_id",
+            (league_id,),
+        ) as cur:
+            roster_rows = await cur.fetchall()
+
+        # Fetch pick counts per roster
+        async with db.execute(
+            "SELECT current_owner_id, COUNT(*) FROM picks WHERE league_id=? GROUP BY current_owner_id",
+            (league_id,),
+        ) as cur:
+            pick_rows = await cur.fetchall()
+
+    pick_counts = {row[0]: row[1] for row in pick_rows}
+    max_picks = max(pick_counts.values(), default=1) or 1
+
+    teams = []
+    pos_totals = {pos: [] for pos in POSITIONS}
+
+    for roster_id, owner, pid_json in roster_rows:
+        player_ids = json.loads(pid_json or "[]")
+
+        # Inline value lookup — avoid another DB connection
+        pos_values = {pos: 0.0 for pos in POSITIONS}
+
+        if player_ids:
+            async with aiosqlite.connect(DB_PATH) as db2:
+                placeholders = ",".join("?" * len(player_ids))
+                async with db2.execute(
+                    f"SELECT position, value_sf, value_1qb FROM players WHERE sleeper_id IN ({placeholders})",
+                    player_ids,
+                ) as cur:
+                    player_rows = await cur.fetchall()
+
+            for pos, vsf, v1qb in player_rows:
+                if pos in pos_values:
+                    pos_values[pos] += float(vsf or v1qb or 0)
+
+        for pos in POSITIONS:
+            pos_totals[pos].append(pos_values[pos])
+
+        picks = pick_counts.get(roster_id, 0)
+        teams.append({
+            "roster_id": roster_id,
+            "team_name": owner or f"Team {roster_id}",
+            "_pos_values": pos_values,
+            "_picks": picks,
+        })
+
+    # Compute max per position for normalisation
+    max_pos = {pos: max(pos_totals[pos], default=1) or 1 for pos in POSITIONS}
+
+    result = []
+    for team in teams:
+        grades = {}
+        for pos in POSITIONS:
+            raw = team["_pos_values"][pos]
+            grades[pos] = round((raw / max_pos[pos]) * 100)
+        grades["Picks"] = round((team["_picks"] / max_picks) * 100)
+
+        result.append({
+            "team_name": team["team_name"],
+            "roster_id": team["roster_id"],
+            "grades": grades,
+        })
+
+    return result
