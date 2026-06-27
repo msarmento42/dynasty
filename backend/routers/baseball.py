@@ -1,7 +1,6 @@
 """Baseball module — MLB Stats API endpoints + manual dynasty roster management."""
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 
 import aiosqlite
