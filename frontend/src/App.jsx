@@ -18,6 +18,9 @@ import BaseballHome from './pages/baseball/BaseballHome.jsx';
 import Prospects from './pages/baseball/Prospects.jsx';
 import PlayerPage from './pages/baseball/PlayerPage.jsx';
 import BaseballRoster from './pages/baseball/Roster.jsx';
+import ValueHistory from './pages/ValueHistory.jsx';
+import Rookies from './pages/Rookies.jsx';
+import MockDraft from './pages/MockDraft.jsx';
 
 const POS_COLORS = {
   QB: { bg: '#e0f2fe', text: '#0369a1' },
@@ -364,6 +367,9 @@ export default function App() {
         <Link to="/start-sit">Start/Sit</Link>
         <Link to="/waiver">Waiver Wire</Link>
         <Link to="/trade-history">Trade History</Link>
+        <Link to="/value-history">Value History</Link>
+        <Link to="/rookies">Rookies</Link>
+        <Link to="/mock-draft">Mock Draft</Link>
         <span style={{ color: 'var(--border-color)', margin: '0 4px' }}>|</span>
         <Link to="/baseball">⚾ Baseball</Link>
         <GlobalSearch />
@@ -391,6 +397,9 @@ export default function App() {
         <Route path="/start-sit" element={<StartSit />} />
         <Route path="/waiver" element={<WaiverWire />} />
         <Route path="/trade-history" element={<TradeHistory />} />
+        <Route path="/value-history" element={<ValueHistory />} />
+        <Route path="/rookies" element={<Rookies />} />
+        <Route path="/mock-draft" element={<MockDraft />} />
         <Route path="/baseball" element={<BaseballHome />} />
         <Route path="/baseball/prospects" element={<Prospects />} />
         <Route path="/baseball/players/:mlbId" element={<PlayerPage />} />
