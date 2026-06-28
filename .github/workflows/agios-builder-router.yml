@@ -57,8 +57,7 @@ jobs:
 
       - name: Clean dependency install artifacts
         run: |
-          git -C target restore -- frontend/package.json 2>/dev/null || true
-          rm -f target/frontend/package-lock.json
+          git -C target restore -- frontend/package.json frontend/package-lock.json 2>/dev/null || true
 
       - name: Route builder
         env:
