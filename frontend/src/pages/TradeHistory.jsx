@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useMemo } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
 
 const CURRENT_YEAR = new Date().getFullYear();
@@ -244,6 +244,10 @@ export default function TradeHistory() {
   const [season, setSeason] = useState('');
   const [leagueId, setLeagueId] = useState('');
 
+  // Add sort state
+  const [sortField, setSortField] = useState('date');
+  const [sortDir, setSortDir] = useState('desc');
+
   const load = useCallback(async (selectedLeagueId, searchVal, seasonVal) => {
     if (!selectedLeagueId) return;
     setLoading(true);
@@ -281,6 +285,39 @@ export default function TradeHistory() {
     setSeason(val);
     load(leagueId, search, val);
   };
+
+  // Handle sort click
+  const handleSortClick = (field) => {
+    if (sortField === field) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDir('desc'); // Default to descending when changing field
+    }
+  };
+
+  // Sort the trades array
+  const sortedTrades = useMemo(() => {
+    if (!trades) return null;
+
+    const sortableTrades = [...trades]; // Create a shallow copy to avoid mutating state directly
+
+    sortableTrades.sort((a, b) => {
+      let comparison = 0;
+      if (sortField === 'date') {
+        // Ensure created_at exists and is a valid date string
+        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        comparison = dateA - dateB;
+      } else if (sortField === 'valueDelta') {
+        comparison = (a.value_delta || 0) - (b.value_delta || 0);
+      }
+      return sortDir === 'asc' ? comparison : -comparison; // Reverse if sortDir is 'desc'
+    });
+
+    return sortableTrades;
+  }, [trades, sortField, sortDir]);
+
 
   return (
     <main style={{ background: 'var(--bg-primary, #f6f7fb)', minHeight: '100vh', padding: 24 }}>
@@ -363,15 +400,48 @@ export default function TradeHistory() {
           </div>
         )}
 
-        {trades && !loading && trades.length === 0 && (
+        {/* Sort controls for Trade List */}
+        {sortedTrades && sortedTrades.length > 0 && (
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 10,
+              padding: '8px 16px',
+              background: 'var(--bg-card, #fff)',
+              border: '1px solid var(--border-color, #d9dee7)',
+              borderRadius: 8,
+            }}
+          >
+            <div>
+              <button
+                style={{ background: 'none', border: 'none', fontWeight: 600, cursor: 'pointer', color: 'var(--text-primary, #1a1a2e)' }}
+                onClick={() => handleSortClick('date')}
+              >
+                Date {sortField === 'date' ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
+              </button>
+            </div>
+            <div>
+              <button
+                style={{ background: 'none', border: 'none', fontWeight: 600, cursor: 'pointer', color: 'var(--text-primary, #1a1a2e)' }}
+                onClick={() => handleSortClick('valueDelta')}
+              >
+                Value Delta {sortField === 'valueDelta' ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {sortedTrades && !loading && sortedTrades.length === 0 && (
           <p style={{ color: '#667085', textAlign: 'center', marginTop: 40 }}>
             No trades found{search ? ` for "${search}"` : ''}.
           </p>
         )}
 
-        {trades && !loading && trades.length > 0 && (
+        {sortedTrades && !loading && sortedTrades.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {trades.map((trade) => (
+            {sortedTrades.map((trade) => (
               <TradeCard key={trade.transaction_id} trade={trade} />
             ))}
           </div>
