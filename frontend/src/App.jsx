@@ -121,6 +121,21 @@ function GlobalSearch() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
+  // Cmd+K / Ctrl+K shortcut
+  useEffect(() => {
+    const handleGlobalKeyDown = (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
+        event.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  }, []);
+
   const hasResults =
     results && (results.football.length > 0 || results.baseball.length > 0);
 
@@ -148,7 +163,7 @@ function GlobalSearch() {
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           onFocus={() => { if (results && hasResults) setOpen(true); }}
-          placeholder="Search players..."
+          placeholder="Search players... (⌘K)"
           style={{
             background: 'transparent',
             border: 'none',
