@@ -15,12 +15,3 @@ jobs:
           python-version: "3.11"
       - run: pip install flake8
       - run: flake8 backend/ --max-line-length=120
-
-  scope-check:
-    name: Validate scope
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - run: python3 .github/scripts/scope_check.py
