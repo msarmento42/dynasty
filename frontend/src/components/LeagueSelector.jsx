@@ -54,7 +54,14 @@ function FormatBadge({ label }) {
 export default function LeagueSelector({ onSelect }) {
   const [leagues, setLeagues] = useState([]);
   const [settings, setSettings] = useState({});
-  const [selectedId, setSelectedId] = useState('');
+  // 1. Change useState call to read from localStorage
+  const [selectedId, setSelectedId] = useState(() => {
+    try {
+      return localStorage.getItem('selectedLeagueId') || null;
+    } catch {
+      return null;
+    }
+  });
   const [open, setOpen] = useState(false);
   const [error, setError] = useState('');
   const dropdownRef = useRef(null);
@@ -70,7 +77,16 @@ export default function LeagueSelector({ onSelect }) {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  // Load leagues + settings on mount
+  // 2. Add useEffect to persist selectedId to localStorage
+  useEffect(() => {
+    if (selectedId) {
+      localStorage.setItem('selectedLeagueId', selectedId);
+    } else {
+      localStorage.removeItem('selectedLeagueId');
+    }
+  }, [selectedId]);
+
+  // Load leagues + settings on mount, and handle initial selection
   useEffect(() => {
     let isMounted = true;
 
@@ -84,10 +100,26 @@ export default function LeagueSelector({ onSelect }) {
         if (!isMounted) return;
         setLeagues(leagueData);
 
-        if (leagueData.length > 0) {
-          setSelectedId(leagueData[0].league_id);
-          onSelect(leagueData[0].league_id);
+        // Determine the ID to select based on localStorage and fetched leagues
+        let idToSelect = null;
+        const isValidStoredId = selectedId && leagueData.some(l => l.league_id === selectedId);
+
+        if (isValidStoredId) {
+          // If the stored ID is valid, use it
+          idToSelect = selectedId;
+        } else if (leagueData.length > 0) {
+          // Otherwise, if there are leagues, default to the first one
+          idToSelect = leagueData[0].league_id;
         }
+        // If idToSelect is null (no leagues), it remains null
+
+        // Update selectedId state only if it's different from the determined ID
+        // This prevents unnecessary re-renders if selectedId is already correct (e.g., from localStorage)
+        if (idToSelect !== selectedId) {
+          setSelectedId(idToSelect);
+        }
+        // Always notify parent component with the determined ID
+        onSelect(idToSelect);
 
         // Load settings (non-blocking — enriches badges after load)
         try {
@@ -114,7 +146,7 @@ export default function LeagueSelector({ onSelect }) {
     return () => {
       isMounted = false;
     };
-  }, [onSelect]);
+  }, [onSelect, selectedId]); // selectedId is a dependency because it's used in the load function
 
   function select(leagueId) {
     setSelectedId(leagueId);
