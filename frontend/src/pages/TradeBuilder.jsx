@@ -217,7 +217,13 @@ export default function TradeBuilder() {
 
           <aside style={{ background: '#ffffff', border: '1px solid #d9dee7', borderRadius: 8, padding: 18 }}>
             <h2 style={{ marginTop: 0 }}>Result</h2>
-            {!result ? (
+            {loading ? (
+              <div style={{ display: 'grid', gap: 8 }}>
+                {[...Array(4)].map((_, i) => (
+                  <div key={i} className="animate-pulse bg-gray-200 rounded-lg h-24 w-full mb-2" />
+                ))}
+              </div>
+            ) : !result ? (
               <p style={{ color: '#667085' }}>Select players from each side to evaluate a trade.</p>
             ) : (
               <div style={{ display: 'grid', gap: 14 }}>
