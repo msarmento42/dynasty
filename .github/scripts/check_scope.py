@@ -102,7 +102,7 @@ def main():
     print(f"  Linked issue: #{issue_number}")
 
     # Get issue body
-    out, rc = run(f'gh issue view {issue_number} --repo "{REPO}" --json body')
+    out, rc = run(f'gh issue view {issue_number} --repo "{REPO}" --json body,title')
     if rc != 0:
         print(f"Could not read issue #{issue_number} — skipping scope check")
         sys.exit(0)
@@ -114,6 +114,7 @@ def main():
         sys.exit(0)
 
     issue_body = issue_data.get("body") or ""
+    is_infra_issue = (issue_data.get("title") or "").lower().startswith("agios infra:")
 
     # Parse allowed and blocked paths from issue
     issue_allowed = parse_paths_section(issue_body, "Allowed paths")
@@ -129,6 +130,11 @@ def main():
     violations = []
     for filepath in changed_files:
         # Check blocked first (takes priority)
+        if file_matches(filepath, ["*.env*", ".env"]):
+            violations.append((filepath, "in blocked paths"))
+            continue
+        if is_infra_issue and effective_allowed and file_matches(filepath, effective_allowed):
+            continue
         if file_matches(filepath, effective_blocked):
             violations.append((filepath, "in blocked paths"))
             continue
