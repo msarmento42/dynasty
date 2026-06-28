@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
 
 const POS_COLORS = {
@@ -77,10 +77,70 @@ function SummaryCard({ label, value, sub, highlight }) {
   );
 }
 
+const SORT_COLUMNS = {
+  rank: { type: 'number' },
+  owner_display_name: { type: 'text' },
+  roster_value: { type: 'number' },
+  pick_value: { type: 'number' },
+  power_score: { type: 'number' },
+  rank_change: { type: 'number' },
+};
+
+function getSortValue(team, key) {
+  if (key === 'owner_display_name') {
+    return team.owner_display_name || '';
+  }
+  return team[key] ?? null;
+}
+
+function SortableHeader({ columnKey, sortConfig, onSort, style, children }) {
+  const isActive = sortConfig.key === columnKey;
+  const direction = isActive ? sortConfig.direction : null;
+  const justifyContent =
+    style?.textAlign === 'right' ? 'flex-end' : style?.textAlign === 'center' ? 'center' : 'flex-start';
+
+  return (
+    <th aria-sort={isActive ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'} style={style}>
+      <button
+        type="button"
+        onClick={() => onSort(columnKey)}
+        style={{
+          alignItems: 'center',
+          background: 'transparent',
+          border: 0,
+          color: 'inherit',
+          cursor: 'pointer',
+          display: 'inline-flex',
+          font: 'inherit',
+          gap: 6,
+          justifyContent,
+          padding: 0,
+          textAlign: 'inherit',
+          textTransform: 'inherit',
+          width: '100%',
+        }}
+      >
+        <span>{children}</span>
+        <span
+          aria-hidden="true"
+          style={{
+            color: isActive ? '#2563eb' : '#98a2b3',
+            fontSize: 11,
+            minWidth: 10,
+          }}
+        >
+          {isActive ? (direction === 'asc' ? '▲' : '▼') : '↕'}
+        </span>
+      </button>
+    </th>
+  );
+}
+
 export default function PowerRankings() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [sortConfig, setSortConfig] = useState({ key: 'rank', direction: 'asc' });
 
   const load = useCallback(async (leagueId) => {
     if (!leagueId) return;
@@ -100,7 +160,39 @@ export default function PowerRankings() {
 
   const rankings = data?.rankings || [];
   const myTeam = rankings.find((t) => t.is_mine);
-  const maxScore = rankings.length > 0 ? rankings[0].power_score : 1;
+  const maxScore = rankings.length > 0 ? Math.max(...rankings.map((team) => Number(team.power_score) || 0)) : 1;
+
+  const handleSort = useCallback((key) => {
+    setSortConfig((current) => ({
+      key,
+      direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  }, []);
+
+  const sortedRankings = useMemo(() => {
+    const column = SORT_COLUMNS[sortConfig.key] || SORT_COLUMNS.rank;
+    const direction = sortConfig.direction === 'desc' ? -1 : 1;
+
+    return [...rankings].sort((a, b) => {
+      const aValue = getSortValue(a, sortConfig.key);
+      const bValue = getSortValue(b, sortConfig.key);
+
+      if (aValue === null && bValue === null) return Number(a.rank) - Number(b.rank);
+      if (aValue === null) return 1;
+      if (bValue === null) return -1;
+
+      if (column.type === 'text') {
+        const result = String(aValue).localeCompare(String(bValue), undefined, {
+          sensitivity: 'base',
+          numeric: true,
+        });
+        return result === 0 ? Number(a.rank) - Number(b.rank) : result * direction;
+      }
+
+      const result = Number(aValue) - Number(bValue);
+      return result === 0 ? Number(a.rank) - Number(b.rank) : result * direction;
+    });
+  }, [rankings, sortConfig]);
 
   const thStyle = {
     borderBottom: '1px solid #e4e7ec',
@@ -206,17 +298,59 @@ export default function PowerRankings() {
               <table style={{ borderCollapse: 'collapse', width: '100%' }}>
                 <thead>
                   <tr style={{ background: '#f9fafb' }}>
-                    <th style={{ ...thStyle, textAlign: 'center', width: 60 }}>Rank</th>
-                    <th style={thStyle}>Team</th>
-                    <th style={{ ...thStyle, textAlign: 'right' }}>Roster Value</th>
-                    <th style={{ ...thStyle, textAlign: 'right' }}>Pick Assets</th>
-                    <th style={{ ...thStyle, textAlign: 'right' }}>Power Score</th>
+                    <SortableHeader
+                      columnKey="rank"
+                      sortConfig={sortConfig}
+                      onSort={handleSort}
+                      style={{ ...thStyle, textAlign: 'center', width: 72 }}
+                    >
+                      Rank
+                    </SortableHeader>
+                    <SortableHeader
+                      columnKey="owner_display_name"
+                      sortConfig={sortConfig}
+                      onSort={handleSort}
+                      style={thStyle}
+                    >
+                      Team
+                    </SortableHeader>
+                    <SortableHeader
+                      columnKey="roster_value"
+                      sortConfig={sortConfig}
+                      onSort={handleSort}
+                      style={{ ...thStyle, textAlign: 'right' }}
+                    >
+                      Roster Value
+                    </SortableHeader>
+                    <SortableHeader
+                      columnKey="pick_value"
+                      sortConfig={sortConfig}
+                      onSort={handleSort}
+                      style={{ ...thStyle, textAlign: 'right' }}
+                    >
+                      Pick Assets
+                    </SortableHeader>
+                    <SortableHeader
+                      columnKey="power_score"
+                      sortConfig={sortConfig}
+                      onSort={handleSort}
+                      style={{ ...thStyle, textAlign: 'right' }}
+                    >
+                      Power Score
+                    </SortableHeader>
                     <th style={thStyle}>Strength</th>
-                    <th style={{ ...thStyle, textAlign: 'center' }}>Trend</th>
+                    <SortableHeader
+                      columnKey="rank_change"
+                      sortConfig={sortConfig}
+                      onSort={handleSort}
+                      style={{ ...thStyle, textAlign: 'center' }}
+                    >
+                      Trend
+                    </SortableHeader>
                   </tr>
                 </thead>
                 <tbody>
-                  {rankings.map((team) => {
+                  {sortedRankings.map((team) => {
                     const isMine = team.is_mine;
                     return (
                       <tr
