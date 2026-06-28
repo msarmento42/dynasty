@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, useEffect } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
 import PlayerCard from '../components/PlayerCard.jsx';
+import ExportButton from '../components/ExportButton.jsx'; // New import
 
 const POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
 
@@ -10,12 +11,27 @@ export default function Roster() {
   const [leagueSettings, setLeagueSettings] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showCopiedToast, setShowCopiedToast] = useState(false); // New state for toast
+
+  // Effect to read leagueId from URL on initial load
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const leagueIdFromUrl = params.get('league');
+    if (leagueIdFromUrl && !selectedLeague) {
+      loadRoster(leagueIdFromUrl);
+    }
+  }, [loadRoster, selectedLeague]);
 
   const loadRoster = useCallback(async (leagueId) => {
     setSelectedLeague(leagueId);
     setLoading(true);
     setError('');
     setLeagueSettings(null);
+
+    // Update URL query parameter
+    const newUrl = new URL(window.location.href);
+    newUrl.searchParams.set('league', leagueId);
+    window.history.pushState({ path: newUrl.href }, '', newUrl.href);
 
     try {
       const [rosterRes, settingsRes] = await Promise.allSettled([
@@ -40,6 +56,17 @@ export default function Roster() {
     }
   }, []);
 
+  const handleShare = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setShowCopiedToast(true);
+      setTimeout(() => setShowCopiedToast(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy: ', err);
+      // Optionally show an error toast to the user
+    }
+  };
+
   const groupedPlayers = useMemo(() => {
     const players = rosterData?.players || [];
     return players.reduce((groups, player) => {
@@ -54,7 +81,35 @@ export default function Roster() {
       <section style={{ margin: '0 auto', maxWidth: 1120 }}>
         <div style={{ display: 'grid', gap: 18, marginBottom: 24 }}>
           <h1 style={{ margin: 0 }}>Roster</h1>
-          <LeagueSelector onSelect={loadRoster} />
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}> {/* Wrapper for selector and buttons */}
+            <LeagueSelector onSelect={loadRoster} initialLeagueId={selectedLeague} /> {/* Pass selectedLeague as initial value */}
+            {rosterData && (
+              <>
+                <button
+                  onClick={handleShare}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: 8,
+                    border: '1px solid #d0d5dd',
+                    background: '#ffffff',
+                    cursor: 'pointer',
+                    fontSize: 14,
+                    fontWeight: 500,
+                    color: '#344054',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Share
+                </button>
+                {rosterData.players && rosterData.players.length > 0 && (
+                  <ExportButton players={rosterData.players} />
+                )}
+              </>
+            )}
+            {showCopiedToast && (
+              <span style={{ color: '#027a48', fontSize: 14, fontWeight: 500, marginLeft: 8 }}>Copied!</span>
+            )}
+          </div>
         </div>
 
         {loading && <p>Loading...</p>}
