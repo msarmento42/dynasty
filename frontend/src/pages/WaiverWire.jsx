@@ -71,12 +71,26 @@ function InjuryBadge({ status }) {
 function DepthBadge({ depth }) {
   if (!depth) return <span style={{ color: '#9ca3af', fontSize: 12 }}>—</span>;
   if (depth === 1) return (
-    <span style={{ background: '#dbeafe', borderRadius: 4, color: '#1e40af', fontSize: 11, fontWeight: 700, padding: '2px 6px' }}>
+    <span style={{
+      background: '#dbeafe',
+      borderRadius: 4,
+      color: '#1e40af',
+      fontSize: 11,
+      fontWeight: 700,
+      padding: '2px 6px',
+    }}>
       Starter
     </span>
   );
   if (depth === 2) return (
-    <span style={{ background: '#f3f4f6', borderRadius: 4, color: '#374151', fontSize: 11, fontWeight: 700, padding: '2px 6px' }}>
+    <span style={{
+      background: '#f3f4f6',
+      borderRadius: 4,
+      color: '#374151',
+      fontSize: 11,
+      fontWeight: 700,
+      padding: '2px 6px',
+    }}>
       Backup
     </span>
   );
@@ -191,8 +205,11 @@ export default function WaiverWire() {
                 <tbody>
                   {players.length === 0 ? (
                     <tr>
-                      <td colSpan={7} style={{ color: '#9ca3af', padding: 24, textAlign: 'center' }}>
-                        No free agents found for this position.
+                      <td colSpan={7}>
+                        <div className="flex flex-col items-center py-16 text-gray-500">
+                          <p>No available players match your current filters.</p>
+                          <p className="text-sm mt-1">Try adjusting the position filter or waiver settings.</p>
+                        </div>
                       </td>
                     </tr>
                   ) : (
