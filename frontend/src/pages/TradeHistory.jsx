@@ -240,21 +240,25 @@ export default function TradeHistory() {
   const [trades, setTrades] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [search, setSearch] = useState('');
-  const [season, setSeason] = useState('');
+  // Renamed 'search' to 'playerSearch' for client-side filtering
+  const [playerSearch, setPlayerSearch] = useState('');
+  const [selectedTeam, setSelectedTeam] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [season, setSeason] = useState(''); // This remains server-side
   const [leagueId, setLeagueId] = useState('');
 
   // Add sort state
   const [sortField, setSortField] = useState('date');
   const [sortDir, setSortDir] = useState('desc');
 
-  const load = useCallback(async (selectedLeagueId, searchVal, seasonVal) => {
+  const load = useCallback(async (selectedLeagueId, seasonVal) => { // Removed searchVal parameter
     if (!selectedLeagueId) return;
     setLoading(true);
     setError('');
     try {
       const params = new URLSearchParams();
-      if (searchVal) params.set('search', searchVal);
+      // Removed server-side search parameter
       if (seasonVal) params.set('season', seasonVal);
       params.set('limit', '100');
       const res = await fetch(`/fantasy/league/${selectedLeagueId}/trade-history?${params}`);
@@ -266,24 +270,25 @@ export default function TradeHistory() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, []); // Dependencies updated
 
   const handleLeagueSelect = useCallback(
     (id) => {
       setLeagueId(id);
-      load(id, search, season);
+      load(id, season); // Removed search
     },
-    [load, search, season],
+    [load, season],
   );
 
-  const handleSearch = (val) => {
-    setSearch(val);
-    load(leagueId, val, season);
-  };
+  // handleSearch is no longer needed as playerSearch is client-side
+  // const handleSearch = (val) => {
+  //   setSearch(val);
+  //   load(leagueId, val, season);
+  // };
 
   const handleSeason = (val) => {
     setSeason(val);
-    load(leagueId, search, val);
+    load(leagueId, val);
   };
 
   // Handle sort click
@@ -295,6 +300,14 @@ export default function TradeHistory() {
       setSortDir('desc'); // Default to descending when changing field
     }
   };
+
+  // Derive unique team names for the team filter
+  const uniqueTeams = useMemo(() => {
+    if (!trades) return [];
+    // Assuming 'team_name' exists on each trade object as per instructions
+    const teams = [...new Set(trades.map(t => t.team_name))];
+    return teams.filter(Boolean).sort(); // Filter out any null/undefined team names
+  }, [trades]);
 
   // Sort the trades array
   const sortedTrades = useMemo(() => {
@@ -318,6 +331,64 @@ export default function TradeHistory() {
     return sortableTrades;
   }, [trades, sortField, sortDir]);
 
+  // Apply client-side filters to sorted trades
+  const filteredTrades = useMemo(() => {
+    if (!sortedTrades) return null;
+
+    let currentFiltered = sortedTrades;
+
+    // Player name filter (case-insensitive substring match)
+    if (playerSearch) {
+      const searchLower = playerSearch.toLowerCase();
+      currentFiltered = currentFiltered.filter(trade => {
+        const playersA = trade.side_a.players.some(p => p.name.toLowerCase().includes(searchLower));
+        const playersB = trade.side_b.players.some(p => p.name.toLowerCase().includes(searchLower));
+        return playersA || playersB;
+      });
+    }
+
+    // Team filter
+    if (selectedTeam) {
+      currentFiltered = currentFiltered.filter(trade =>
+        trade.team_name === selectedTeam // Assuming trade object has team_name
+      );
+    }
+
+    // Date range filter (inclusive)
+    if (dateFrom || dateTo) {
+      currentFiltered = currentFiltered.filter(trade => {
+        const tradeDate = trade.created_at ? new Date(trade.created_at) : null;
+        if (!tradeDate) return false; // Trade must have a valid date to be filtered
+
+        const from = dateFrom ? new Date(dateFrom + 'T00:00:00') : null; // Start of the 'from' day
+        const to = dateTo ? new Date(dateTo + 'T23:59:59.999') : null;   // End of the 'to' day
+
+        let passesFrom = true;
+        if (from) {
+          passesFrom = tradeDate >= from;
+        }
+
+        let passesTo = true;
+        if (to) {
+          passesTo = tradeDate <= to;
+        }
+
+        return passesFrom && passesTo;
+      });
+    }
+
+    return currentFiltered;
+  }, [sortedTrades, playerSearch, selectedTeam, dateFrom, dateTo]);
+
+  // Function to clear all client-side filters
+  const handleClearFilters = useCallback(() => {
+    setPlayerSearch('');
+    setSelectedTeam('');
+    setDateFrom('');
+    setDateTo('');
+  }, []);
+
+  const anyFilterActive = playerSearch || selectedTeam || dateFrom || dateTo;
 
   return (
     <main style={{ background: 'var(--bg-primary, #f6f7fb)', minHeight: '100vh', padding: 24 }}>
@@ -340,15 +411,16 @@ export default function TradeHistory() {
             display: 'flex',
             flexWrap: 'wrap',
             gap: 12,
-            marginBottom: 20,
+            marginBottom: 10,
             padding: '12px 16px',
           }}
         >
+          {/* Player name search */}
           <input
             type="text"
-            value={search}
-            onChange={(e) => handleSearch(e.target.value)}
-            placeholder="Search by player name..."
+            value={playerSearch}
+            onChange={(e) => setPlayerSearch(e.target.value)}
+            placeholder="Search player..."
             style={{
               background: 'var(--bg-secondary, #f9fafb)',
               border: '1px solid var(--border-color, #d1d5db)',
@@ -359,6 +431,69 @@ export default function TradeHistory() {
               padding: '8px 12px',
             }}
           />
+
+          {/* Team filter */}
+          <select
+            value={selectedTeam}
+            onChange={(e) => setSelectedTeam(e.target.value)}
+            style={{
+              background: 'var(--bg-secondary, #f9fafb)',
+              border: '1px solid var(--border-color, #d1d5db)',
+              borderRadius: 6,
+              color: 'var(--text-primary, #111)',
+              fontSize: 14,
+              padding: '8px 12px',
+              flex: '0 0 auto',
+              minWidth: '120px',
+            }}
+          >
+            <option value="">All Teams</option>
+            {uniqueTeams.map((team) => (
+              <option key={team} value={team}>
+                {team}
+              </option>
+            ))}
+          </select>
+
+          {/* Date range - From */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <label htmlFor="date-from" style={{ fontSize: 14, color: 'var(--text-secondary, #667085)', whiteSpace: 'nowrap' }}>From:</label>
+            <input
+              id="date-from"
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              style={{
+                background: 'var(--bg-secondary, #f9fafb)',
+                border: '1px solid var(--border-color, #d1d5db)',
+                borderRadius: 6,
+                color: 'var(--text-primary, #111)',
+                fontSize: 14,
+                padding: '8px 12px',
+              }}
+            />
+          </div>
+
+          {/* Date range - To */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <label htmlFor="date-to" style={{ fontSize: 14, color: 'var(--text-secondary, #667085)', whiteSpace: 'nowrap' }}>To:</label>
+            <input
+              id="date-to"
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              style={{
+                background: 'var(--bg-secondary, #f9fafb)',
+                border: '1px solid var(--border-color, #d1d5db)',
+                borderRadius: 6,
+                color: 'var(--text-primary, #111)',
+                fontSize: 14,
+                padding: '8px 12px',
+              }}
+            />
+          </div>
+
+          {/* Existing Season filter (server-side) */}
           <select
             value={season}
             onChange={(e) => handleSeason(e.target.value)}
@@ -369,6 +504,8 @@ export default function TradeHistory() {
               color: 'var(--text-primary, #111)',
               fontSize: 14,
               padding: '8px 12px',
+              flex: '0 0 auto',
+              minWidth: '120px',
             }}
           >
             <option value="">All Seasons</option>
@@ -378,12 +515,33 @@ export default function TradeHistory() {
               </option>
             ))}
           </select>
-          {trades && (
-            <span style={{ color: '#9ca3af', fontSize: 13, marginLeft: 'auto' }}>
-              {trades.length} trade{trades.length !== 1 ? 's' : ''}
-            </span>
-          )}
         </div>
+
+        {/* Clear filters button and row count */}
+        {trades && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+            {anyFilterActive && (
+              <button
+                onClick={handleClearFilters}
+                style={{
+                  background: '#fef2f2',
+                  border: '1px solid #fca5a5',
+                  borderRadius: 6,
+                  color: '#dc2626',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  padding: '8px 12px',
+                  cursor: 'pointer',
+                }}
+              >
+                Clear filters
+              </button>
+            )}
+            <span style={{ color: '#9ca3af', fontSize: 13, marginLeft: anyFilterActive ? 'auto' : '0' }}>
+              Showing {filteredTrades ? filteredTrades.length : 0} of {trades.length} trades
+            </span>
+          </div>
+        )}
 
         {loading && <p style={{ color: 'var(--text-secondary, #667085)' }}>Loading trades...</p>}
         {error && (
@@ -401,7 +559,7 @@ export default function TradeHistory() {
         )}
 
         {/* Sort controls for Trade List */}
-        {sortedTrades && sortedTrades.length > 0 && (
+        {filteredTrades && filteredTrades.length > 0 && (
           <div
             style={{
               display: 'flex',
@@ -433,15 +591,15 @@ export default function TradeHistory() {
           </div>
         )}
 
-        {sortedTrades && !loading && sortedTrades.length === 0 && (
+        {filteredTrades && !loading && filteredTrades.length === 0 && (
           <p style={{ color: '#667085', textAlign: 'center', marginTop: 40 }}>
-            No trades found{search ? ` for "${search}"` : ''}.
+            No trades found with current filters.
           </p>
         )}
 
-        {sortedTrades && !loading && sortedTrades.length > 0 && (
+        {filteredTrades && !loading && filteredTrades.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {sortedTrades.map((trade) => (
+            {filteredTrades.map((trade) => (
               <TradeCard key={trade.transaction_id} trade={trade} />
             ))}
           </div>
