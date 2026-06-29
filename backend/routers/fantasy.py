@@ -9,6 +9,7 @@ from typing import List, Optional
 
 import aiosqlite
 from fastapi import APIRouter, HTTPException, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from backend.database import DB_PATH
@@ -19,6 +20,8 @@ from backend.services import sleeper as sleeper_svc
 
 router = APIRouter()
 PLAYER_VALUE_CACHE_CONTROL = "public, max-age=3600"
+PLAYER_VALUE_REFRESH_COOLDOWN_SECONDS = 60
+LAST_PLAYER_VALUE_REFRESH_AT = None
 
 
 class PickRequest(BaseModel):
@@ -99,6 +102,61 @@ def manager_payload(row: tuple, my_roster_id: int) -> dict:
 @router.get("/status")
 async def status():
     return {"status": "dynasty engine online"}
+
+
+def parse_cache_timestamp(value: str) -> Optional[datetime]:
+    """Parse SQLite snapshot dates and ISO timestamps into UTC datetimes."""
+    if not value:
+        return None
+    try:
+        normalized = value.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        try:
+            parsed = datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+@router.get("/cache-status")
+async def get_cache_status():
+    """Return the latest known player value cache timestamp and age."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT MAX(snapshot_date) FROM player_snapshots") as cur:
+            row = await cur.fetchone()
+
+    cached_at = parse_cache_timestamp(row[0] if row else None)
+    if cached_at is None:
+        return {"cached_at": None, "cache_age_seconds": None}
+
+    age_seconds = max(0, int((datetime.now(timezone.utc) - cached_at).total_seconds()))
+    return {"cached_at": cached_at.isoformat(), "cache_age_seconds": age_seconds}
+
+
+@router.post("/refresh-cache")
+async def refresh_cache():
+    """Record a manual player value cache refresh request with cooldown protection."""
+    global LAST_PLAYER_VALUE_REFRESH_AT
+
+    now = datetime.now(timezone.utc)
+    if LAST_PLAYER_VALUE_REFRESH_AT is not None:
+        elapsed = int((now - LAST_PLAYER_VALUE_REFRESH_AT).total_seconds())
+        if elapsed < PLAYER_VALUE_REFRESH_COOLDOWN_SECONDS:
+            retry_after = PLAYER_VALUE_REFRESH_COOLDOWN_SECONDS - elapsed
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": "Refresh cooldown active",
+                    "retry_after_seconds": retry_after,
+                },
+            )
+
+    LAST_PLAYER_VALUE_REFRESH_AT = now
+    return {"cleared_at": now.isoformat()}
 
 
 @router.get("/leagues")

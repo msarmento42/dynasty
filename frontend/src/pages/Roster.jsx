@@ -1,42 +1,65 @@
 import { useCallback, useMemo, useState, useEffect } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
 import PlayerCard from '../components/PlayerCard.jsx';
-import ExportButton from '../components/ExportButton.jsx'; // New import
+import ExportButton from '../components/ExportButton.jsx';
 
 const POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
+
+function formatCacheAge(cacheAgeSeconds) {
+  if (cacheAgeSeconds === null || cacheAgeSeconds === undefined) {
+    return 'Unknown';
+  }
+
+  if (cacheAgeSeconds < 60) {
+    return '< 1 min ago';
+  }
+
+  const minutes = Math.floor(cacheAgeSeconds / 60);
+  if (minutes < 60) {
+    return `${minutes} min ago`;
+  }
+
+  return `${Math.floor(minutes / 60)}h ago`;
+}
 
 export default function Roster() {
   const [selectedLeague, setSelectedLeague] = useState(null);
   const [rosterData, setRosterData] = useState(null);
   const [leagueSettings, setLeagueSettings] = useState(null);
+  const [cacheStatus, setCacheStatus] = useState({ cached_at: null, cache_age_seconds: null });
   const [loading, setLoading] = useState(false);
+  const [refreshingValues, setRefreshingValues] = useState(false);
   const [error, setError] = useState('');
-  const [showCopiedToast, setShowCopiedToast] = useState(false); // New state for toast
+  const [toast, setToast] = useState('');
 
-  // Effect to read leagueId from URL on initial load
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const leagueIdFromUrl = params.get('league');
-    if (leagueIdFromUrl && !selectedLeague) {
-      loadRoster(leagueIdFromUrl);
+  const showToast = useCallback((message) => {
+    setToast(message);
+    window.setTimeout(() => setToast(''), 2500);
+  }, []);
+
+  const loadCacheStatus = useCallback(async () => {
+    const response = await fetch('/fantasy/cache-status', { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error('Unable to load cache status');
     }
-  }, [loadRoster, selectedLeague]);
+    setCacheStatus(await response.json());
+  }, []);
 
-  const loadRoster = useCallback(async (leagueId) => {
+  const loadRoster = useCallback(async (leagueId, options = {}) => {
     setSelectedLeague(leagueId);
-    setLoading(true);
+    setLoading(!options.silent);
     setError('');
     setLeagueSettings(null);
 
-    // Update URL query parameter
     const newUrl = new URL(window.location.href);
     newUrl.searchParams.set('league', leagueId);
     window.history.pushState({ path: newUrl.href }, '', newUrl.href);
 
     try {
-      const [rosterRes, settingsRes] = await Promise.allSettled([
-        fetch(`/fantasy/league/${leagueId}/roster`),
+      const [rosterRes, settingsRes, cacheRes] = await Promise.allSettled([
+        fetch(`/fantasy/league/${leagueId}/roster`, { cache: 'no-store' }),
         fetch(`/fantasy/league/${leagueId}/settings`),
+        fetch('/fantasy/cache-status', { cache: 'no-store' }),
       ]);
 
       if (rosterRes.status === 'fulfilled' && rosterRes.value.ok) {
@@ -48,6 +71,10 @@ export default function Roster() {
       if (settingsRes.status === 'fulfilled' && settingsRes.value.ok) {
         setLeagueSettings(await settingsRes.value.json());
       }
+
+      if (cacheRes.status === 'fulfilled' && cacheRes.value.ok) {
+        setCacheStatus(await cacheRes.value.json());
+      }
     } catch (err) {
       setRosterData(null);
       setError(err.message);
@@ -56,14 +83,57 @@ export default function Roster() {
     }
   }, []);
 
+  useEffect(() => {
+    loadCacheStatus().catch(() => {});
+  }, [loadCacheStatus]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const leagueIdFromUrl = params.get('league');
+    if (leagueIdFromUrl && !selectedLeague) {
+      loadRoster(leagueIdFromUrl);
+    }
+  }, [loadRoster, selectedLeague]);
+
   const handleShare = async () => {
     try {
       await navigator.clipboard.writeText(window.location.href);
-      setShowCopiedToast(true);
-      setTimeout(() => setShowCopiedToast(false), 2000);
+      showToast('Copied!');
     } catch (err) {
       console.error('Failed to copy: ', err);
-      // Optionally show an error toast to the user
+    }
+  };
+
+  const handleRefreshValues = async () => {
+    setRefreshingValues(true);
+    setError('');
+
+    try {
+      const response = await fetch('/fantasy/refresh-cache', {
+        method: 'POST',
+        cache: 'no-store',
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (response.status === 429) {
+        showToast(`Refresh on cooldown, try again in ${payload.retry_after_seconds || 60}s`);
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error('Unable to refresh player values');
+      }
+
+      if (selectedLeague) {
+        await loadRoster(selectedLeague, { silent: true });
+      } else {
+        await loadCacheStatus();
+      }
+      showToast('Values refreshed');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRefreshingValues(false);
     }
   };
 
@@ -80,9 +150,31 @@ export default function Roster() {
     <main style={{ background: '#f6f7fb', minHeight: '100vh', padding: 24 }}>
       <section style={{ margin: '0 auto', maxWidth: 1120 }}>
         <div style={{ display: 'grid', gap: 18, marginBottom: 24 }}>
-          <h1 style={{ margin: 0 }}>Roster</h1>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}> {/* Wrapper for selector and buttons */}
-            <LeagueSelector onSelect={loadRoster} initialLeagueId={selectedLeague} /> {/* Pass selectedLeague as initial value */}
+          <div>
+            <h1 style={{ margin: 0 }}>Roster</h1>
+            <p style={{ color: '#667085', fontSize: 13, margin: '6px 0 0' }}>
+              Last updated: {formatCacheAge(cacheStatus.cache_age_seconds)}
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            <LeagueSelector onSelect={loadRoster} initialLeagueId={selectedLeague} />
+            <button
+              onClick={handleRefreshValues}
+              disabled={refreshingValues}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 8,
+                border: '1px solid #d0d5dd',
+                background: refreshingValues ? '#eef2f7' : '#ffffff',
+                cursor: refreshingValues ? 'wait' : 'pointer',
+                fontSize: 14,
+                fontWeight: 500,
+                color: '#344054',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {refreshingValues ? 'Refreshing...' : '⟳ Refresh Values'}
+            </button>
             {rosterData && (
               <>
                 <button
@@ -106,8 +198,10 @@ export default function Roster() {
                 )}
               </>
             )}
-            {showCopiedToast && (
-              <span style={{ color: '#027a48', fontSize: 14, fontWeight: 500, marginLeft: 8 }}>Copied!</span>
+            {toast && (
+              <span style={{ color: '#027a48', fontSize: 14, fontWeight: 500, marginLeft: 8 }}>
+                {toast}
+              </span>
             )}
           </div>
         </div>
