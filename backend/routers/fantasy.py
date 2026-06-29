@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
 from backend.database import DB_PATH
@@ -18,6 +18,7 @@ from backend.services.proposals import generate_proposals
 from backend.services import sleeper as sleeper_svc
 
 router = APIRouter()
+PLAYER_VALUE_CACHE_CONTROL = "public, max-age=3600"
 
 
 class PickRequest(BaseModel):
@@ -518,8 +519,9 @@ async def get_picks(league_id: str, my_roster_id: Optional[int] = None):
 
 
 @router.get("/players/{player_id}/profile")
-async def get_player_profile(player_id: str):
+async def get_player_profile(player_id: str, response: Response):
     """Return full dynasty profile for a single player."""
+    response.headers["Cache-Control"] = PLAYER_VALUE_CACHE_CONTROL
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
             "SELECT sleeper_id, name, position, team, age, value_sf, value_1qb, "
@@ -1722,8 +1724,9 @@ async def get_league_trade_history(
 # ---------------------------------------------------------------------------
 
 @router.get("/players/search")
-async def search_players(q: str = "", sport: str = "all"):
+async def search_players(response: Response, q: str = "", sport: str = "all"):
     """Search football and baseball players by name. Returns top 20 per sport."""
+    response.headers["Cache-Control"] = PLAYER_VALUE_CACHE_CONTROL
     if not q or len(q) < 2:
         return {"football": [], "baseball": []}
 
@@ -1872,12 +1875,13 @@ async def get_value_history(league_id: Optional[str] = None):
 # ---------------------------------------------------------------------------
 
 @router.get("/players/rookies")
-async def get_rookies(season: int = 2025):
+async def get_rookies(response: Response, season: int = 2025):
     """Return dynasty rookie rankings sorted by SF value.
 
     Filters by years_exp <= 1 if the column exists, otherwise falls back to
     age <= 23. Includes rank, positional rank, and rising badge.
     """
+    response.headers["Cache-Control"] = PLAYER_VALUE_CACHE_CONTROL
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("PRAGMA table_info(players)") as cur:
             columns = {row[1] for row in await cur.fetchall()}
