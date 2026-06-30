@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, useEffect } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
-import PlayerCard from '../components/PlayerCard.jsx';
+// import PlayerCard from '../components/PlayerCard.jsx'; // Removed as players are now displayed in a table
 import ExportButton from '../components/ExportButton.jsx';
 import ValueTrendChart from '../components/ValueTrendChart.jsx';
 
@@ -33,6 +33,8 @@ export default function Roster() {
   const [refreshingValues, setRefreshingValues] = useState(false);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
+  const [sortColumn, setSortColumn] = useState('adjusted_value'); // Default sort by value
+  const [sortDirection, setSortDirection] = useState('desc'); // Default descending
 
   const showToast = useCallback((message) => {
     setToast(message);
@@ -147,14 +149,51 @@ export default function Roster() {
     }
   };
 
-  const groupedPlayers = useMemo(() => {
-    const players = rosterData?.players || [];
-    return players.reduce((groups, player) => {
-      const position = player.position || 'Other';
-      const currentGroup = groups[position] || [];
-      return { ...groups, [position]: [...currentGroup, player] };
-    }, {});
-  }, [rosterData]);
+  const handleSort = useCallback((column) => {
+    if (sortColumn === column) {
+      setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc'); // Default to ascending when changing column
+    }
+  }, [sortColumn]);
+
+  const sortedPlayers = useMemo(() => {
+    if (!rosterData?.players) return [];
+
+    const players = [...rosterData.players]; // Create a shallow copy to avoid mutating original state
+
+    players.sort((a, b) => {
+      let valA, valB;
+
+      switch (sortColumn) {
+        case 'full_name':
+          valA = a.full_name || '';
+          valB = b.full_name || '';
+          return sortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+        case 'position':
+          const posA = POSITION_ORDER.indexOf(a.position);
+          const posB = POSITION_ORDER.indexOf(b.position);
+          if (posA !== posB) {
+            return sortDirection === 'asc' ? posA - posB : posB - posA;
+          }
+          // If positions are the same, sort by name
+          valA = a.full_name || '';
+          valB = b.full_name || '';
+          return sortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+        case 'age':
+          valA = Number(a.age || 0);
+          valB = Number(b.age || 0);
+          return sortDirection === 'asc' ? valA - valB : valB - valA;
+        case 'adjusted_value':
+        default:
+          valA = Number(a.adjusted_value || 0);
+          valB = Number(b.adjusted_value || 0);
+          return sortDirection === 'asc' ? valA - valB : valB - valA;
+      }
+    });
+    return players;
+  }, [rosterData, sortColumn, sortDirection]);
 
   return (
     <main style={{ background: '#f6f7fb', minHeight: '100vh', padding: 24 }}>
@@ -251,31 +290,106 @@ export default function Roster() {
 
             <ValueTrendChart history={valueHistory} />
 
-            {POSITION_ORDER.map((position) => {
-              const players = [...(groupedPlayers[position] || [])].sort(
-                (a, b) => Number(b.adjusted_value || 0) - Number(a.adjusted_value || 0),
-              );
-              if (players.length === 0) {
-                return null;
-              }
-
-              return (
-                <section key={position} style={{ display: 'grid', gap: 12 }}>
-                  <h3 style={{ margin: 0 }}>{position}</h3>
-                  <div
-                    style={{
-                      display: 'grid',
-                      gap: 12,
-                      gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-                    }}
-                  >
-                    {players.map((player) => (
-                      <PlayerCard key={player.sleeper_id} player={player} />
+            {rosterData.players && rosterData.players.length > 0 && (
+              <div style={{ background: '#ffffff', border: '1px solid #d9dee7', borderRadius: 8, overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th
+                        onClick={() => handleSort('full_name')}
+                        style={{
+                          padding: '12px 16px',
+                          textAlign: 'left',
+                          borderBottom: '1px solid #eaecf0',
+                          cursor: 'pointer',
+                          fontWeight: 600,
+                          color: '#475467',
+                          fontSize: 12,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Player Name{' '}
+                        {sortColumn === 'full_name' && (sortDirection === 'asc' ? '▲' : '▼')}
+                      </th>
+                      <th
+                        onClick={() => handleSort('position')}
+                        style={{
+                          padding: '12px 16px',
+                          textAlign: 'left',
+                          borderBottom: '1px solid #eaecf0',
+                          cursor: 'pointer',
+                          fontWeight: 600,
+                          color: '#475467',
+                          fontSize: 12,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Position{' '}
+                        {sortColumn === 'position' && (sortDirection === 'asc' ? '▲' : '▼')}
+                      </th>
+                      <th
+                        onClick={() => handleSort('age')}
+                        style={{
+                          padding: '12px 16px',
+                          textAlign: 'left',
+                          borderBottom: '1px solid #eaecf0',
+                          cursor: 'pointer',
+                          fontWeight: 600,
+                          color: '#475467',
+                          fontSize: 12,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Age{' '}
+                        {sortColumn === 'age' && (sortDirection === 'asc' ? '▲' : '▼')}
+                      </th>
+                      <th
+                        onClick={() => handleSort('adjusted_value')}
+                        style={{
+                          padding: '12px 16px',
+                          textAlign: 'right',
+                          borderBottom: '1px solid #eaecf0',
+                          cursor: 'pointer',
+                          fontWeight: 600,
+                          color: '#475467',
+                          fontSize: 12,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Value{' '}
+                        {sortColumn === 'adjusted_value' && (sortDirection === 'asc' ? '▲' : '▼')}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedPlayers.map((player) => (
+                      <tr key={player.sleeper_id}>
+                        <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#101828', fontSize: 14 }}>
+                          {player.full_name}
+                        </td>
+                        <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
+                          {player.position}
+                        </td>
+                        <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
+                          {player.age}
+                        </td>
+                        <td style={{ padding: '12px 16px', textAlign: 'right', borderBottom: '1px solid #eaecf0', color: '#101828', fontSize: 14, fontWeight: 500 }}>
+                          {Number(player.adjusted_value || 0).toLocaleString()}
+                        </td>
+                      </tr>
                     ))}
-                  </div>
-                </section>
-              );
-            })}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             <footer style={{ color: '#475467', fontWeight: 700 }}>
               Total roster value: {Number(rosterData.total_adjusted_value || 0).toLocaleString()}
