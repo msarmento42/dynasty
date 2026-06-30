@@ -1,8 +1,9 @@
+```python
 """Playoff odds simulator — Monte Carlo simulation for dynasty playoff probability."""
 
 import json
 import random
-from datetime import date
+from datetime import date, timedelta
 
 import aiosqlite
 from fastapi import APIRouter, Query
@@ -22,23 +23,38 @@ def playoff_spots(n_teams: int) -> int:
     return 6
 
 
-TOTAL_REGULAR_SEASON_WEEKS = 14
+TOTAL_REGULAR_SEASON_WEEKS = 18
 
 
 def get_current_nfl_week() -> int:
-    """NFL regular season runs ~Sept week 1 through ~Jan week 18."""
+    """
+    Calculates the current NFL regular season week based on the current date.
+    NFL week 1 is defined as the first Thursday on or after September 5th of the season year.
+    The season year is the current year if the month is September or later,
+    otherwise it's the previous year.
+    Returns an integer between 1 and 18, inclusive.
+    """
     today = date.today()
-    # NFL season typically starts first Thursday of September
-    # Week 1 of 2025 season = Sept 4, 2025
-    nfl_week1_2025 = date(2025, 9, 4)
-    delta = (today - nfl_week1_2025).days
-    if delta < 0:
-        return 1  # preseason / offseason
-    week = (delta // 7) + 1
-    return min(max(week, 1), 18)
 
+    # Determine the NFL season year
+    season_year = today.year if today.month >= 9 else today.year - 1
 
-CURRENT_WEEK = get_current_nfl_week()
+    # Calculate Week 1 start: first Thursday on or after September 5 of the season year
+    sept_5 = date(season_year, 9, 5)
+    # weekday() returns 0 for Monday, 3 for Thursday
+    days_until_thursday = (3 - sept_5.weekday() + 7) % 7
+    week1_start = sept_5 + timedelta(days=days_until_thursday)
+
+    # If today is before week1_start, it's preseason/offseason, return week 1
+    # This ensures that even before the season officially starts, we consider it week 1
+    if today < week1_start:
+        return 1
+
+    # Compute current week
+    current_week = (today - week1_start).days // 7 + 1
+
+    # Clamp the week between 1 and 18
+    return max(1, min(18, current_week))
 
 
 async def load_teams_from_db(league_id: str) -> list:
@@ -124,10 +140,11 @@ def simulate_season(teams, weeks_remaining, spots, sim_count):
     for _ in range(sim_count):
         # Seed plausible current records based on team strength
         wins = []
+        current_nfl_week = get_current_nfl_week()
         for i in range(n):
             base_win_rate = 0.4 + (n - i) / (n * 2.5)
-            current_wins = round(base_win_rate * CURRENT_WEEK + random.gauss(0, 1))
-            current_wins = max(0, min(current_wins, CURRENT_WEEK))
+            current_wins = round(base_win_rate * current_nfl_week + random.gauss(0, 1))
+            current_wins = max(0, min(current_wins, current_nfl_week))
             wins.append(current_wins)
 
         sim_wins = wins[:]
@@ -162,7 +179,8 @@ async def simulate_playoffs(
 
     Returns each team's probability of making the playoffs based on remaining schedule.
     """
-    weeks_remaining = TOTAL_REGULAR_SEASON_WEEKS - CURRENT_WEEK
+    current_nfl_week = get_current_nfl_week()
+    weeks_remaining = TOTAL_REGULAR_SEASON_WEEKS - current_nfl_week
 
     teams = []
     if league_id:
@@ -191,15 +209,15 @@ async def simulate_playoffs(
         prob = playoff_counts[i] / simulations
         win_rate = team["proj_points"] / total_proj if total_proj else 1 / n
         avg_wins = round(
-            CURRENT_WEEK * win_rate * (n - 1) / n + weeks_remaining * win_rate * (n - 1) / n,
+            current_nfl_week * win_rate * (n - 1) / n + weeks_remaining * win_rate * (n - 1) / n,
             1
         )
         results.append({
             "roster_id": team["roster_id"],
             "team_name": team["team_name"],
             "current_record": (
-                f"{round(CURRENT_WEEK * win_rate * (n - 1) / n)}-"
-                f"{round(CURRENT_WEEK * (1 - win_rate) * (n - 1) / n)}"
+                f"{round(current_nfl_week * win_rate * (n - 1) / n)}-"
+                f"{round(current_nfl_week * (1 - win_rate) * (n - 1) / n)}"
             ),
             "playoff_probability": round(prob * 100, 1),
             "avg_wins": avg_wins,
@@ -216,3 +234,5 @@ async def simulate_playoffs(
         "simulations": simulations,
         "teams": results,
     }
+
+```
