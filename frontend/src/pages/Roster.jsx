@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState, useEffect } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
 import PlayerCard from '../components/PlayerCard.jsx';
 import ExportButton from '../components/ExportButton.jsx';
+import ValueTrendChart from '../components/ValueTrendChart.jsx';
 
 const POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
 
@@ -25,6 +26,7 @@ function formatCacheAge(cacheAgeSeconds) {
 export default function Roster() {
   const [selectedLeague, setSelectedLeague] = useState(null);
   const [rosterData, setRosterData] = useState(null);
+  const [valueHistory, setValueHistory] = useState([]);
   const [leagueSettings, setLeagueSettings] = useState(null);
   const [cacheStatus, setCacheStatus] = useState({ cached_at: null, cache_age_seconds: null });
   const [loading, setLoading] = useState(false);
@@ -50,16 +52,18 @@ export default function Roster() {
     setLoading(!options.silent);
     setError('');
     setLeagueSettings(null);
+    setValueHistory([]);
 
     const newUrl = new URL(window.location.href);
     newUrl.searchParams.set('league', leagueId);
     window.history.pushState({ path: newUrl.href }, '', newUrl.href);
 
     try {
-      const [rosterRes, settingsRes, cacheRes] = await Promise.allSettled([
+      const [rosterRes, settingsRes, cacheRes, historyRes] = await Promise.allSettled([
         fetch(`/fantasy/league/${leagueId}/roster`, { cache: 'no-store' }),
         fetch(`/fantasy/league/${leagueId}/settings`),
         fetch('/fantasy/cache-status', { cache: 'no-store' }),
+        fetch(`/fantasy/league/${leagueId}/roster-value-history`, { cache: 'no-store' }),
       ]);
 
       if (rosterRes.status === 'fulfilled' && rosterRes.value.ok) {
@@ -75,8 +79,14 @@ export default function Roster() {
       if (cacheRes.status === 'fulfilled' && cacheRes.value.ok) {
         setCacheStatus(await cacheRes.value.json());
       }
+
+      if (historyRes.status === 'fulfilled' && historyRes.value.ok) {
+        const payload = await historyRes.value.json();
+        setValueHistory(payload.history || []);
+      }
     } catch (err) {
       setRosterData(null);
+      setValueHistory([]);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -238,6 +248,8 @@ export default function Roster() {
                 {Number(rosterData.total_adjusted_value || 0).toLocaleString()}
               </strong>
             </header>
+
+            <ValueTrendChart history={valueHistory} />
 
             {POSITION_ORDER.map((position) => {
               const players = [...(groupedPlayers[position] || [])].sort(

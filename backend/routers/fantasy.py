@@ -221,6 +221,37 @@ async def get_my_roster(league_id: str):
     }
 
 
+@router.get("/league/{league_id}/roster-value-history")
+async def get_roster_value_history(league_id: str):
+    """Return the last 30 roster value snapshots for Marcus's roster."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        league = await get_league_row(db, league_id)
+        my_roster_id = league["config"].get("my_roster_id", league["my_roster_id"])
+
+        async with db.execute(
+            """
+            SELECT total_value, synced_at
+            FROM roster_snapshots
+            WHERE league_id=? AND roster_id=?
+            ORDER BY synced_at DESC
+            LIMIT 30
+            """,
+            (league_id, my_roster_id),
+        ) as cur:
+            rows = await cur.fetchall()
+
+    history = [
+        {
+            "league_id": league_id,
+            "roster_id": my_roster_id,
+            "total_value": round(row[0] or 0, 2),
+            "synced_at": row[1],
+        }
+        for row in reversed(rows)
+    ]
+    return {"league_id": league_id, "roster_id": my_roster_id, "history": history}
+
+
 @router.get("/league/{league_id}/all-rosters")
 async def get_all_rosters(league_id: str):
     """Return all teams' rosters with total values."""

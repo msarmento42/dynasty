@@ -74,6 +74,14 @@ CREATE TABLE IF NOT EXISTS player_snapshots (
     UNIQUE(sleeper_id, snapshot_date)
 );
 
+CREATE TABLE IF NOT EXISTS roster_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    league_id TEXT NOT NULL,
+    roster_id INTEGER NOT NULL,
+    total_value REAL NOT NULL DEFAULT 0,
+    synced_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS trade_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     league_id TEXT,
