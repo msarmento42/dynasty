@@ -8,7 +8,7 @@ from typing import Optional
 import aiosqlite
 
 from backend.services import fantasycalc, sleeper, trade_history
-from backend.services.fantasy_engine import LEAGUE_CONFIG
+from backend.services.fantasy_engine import LEAGUE_CONFIG, enrich_player
 from backend.services.sleeper import LEAGUES
 
 
@@ -121,6 +121,61 @@ async def sync_league(db: aiosqlite.Connection, league_id: str, config: dict) ->
         )
 
     await db.commit()
+
+    await snapshot_roster_values(db, league_id, now)
+
+
+async def snapshot_roster_values(db: aiosqlite.Connection, league_id: str, synced_at: str) -> int:
+    """Store total adjusted value snapshots for every roster in a league."""
+    async with db.execute(
+        "SELECT roster_id, player_ids_json FROM rosters WHERE league_id=?",
+        (league_id,),
+    ) as cur:
+        roster_rows = await cur.fetchall()
+
+    snapshot_count = 0
+    for roster_id, player_ids_json in roster_rows:
+        player_ids = json.loads(player_ids_json or "[]")
+        total_value = 0
+
+        if player_ids:
+            placeholders = ",".join("?" * len(player_ids))
+            async with db.execute(
+                f"""
+                SELECT sleeper_id, name, position, team, age, value_sf, value_1qb,
+                       trend_30d, injury_status
+                FROM players
+                WHERE sleeper_id IN ({placeholders})
+                """,
+                player_ids,
+            ) as cur:
+                rows = await cur.fetchall()
+
+            for row in rows:
+                player = {
+                    "sleeper_id": row[0],
+                    "name": row[1],
+                    "position": row[2],
+                    "team": row[3],
+                    "age": row[4],
+                    "value_sf": row[5] or 0,
+                    "value_1qb": row[6] or 0,
+                    "trend_30d": row[7] or 0,
+                    "injury_status": row[8],
+                }
+                total_value += enrich_player(player, league_id).get("adjusted_value", 0)
+
+        await db.execute(
+            """
+            INSERT INTO roster_snapshots (league_id, roster_id, total_value, synced_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (league_id, roster_id, total_value, synced_at),
+        )
+        snapshot_count += 1
+
+    await db.commit()
+    return snapshot_count
 
 
 def injury_severity(status: Optional[str]) -> str:
