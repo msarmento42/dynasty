@@ -1,4 +1,5 @@
 import { useCallback, useState, useMemo } from 'react';
+import ExportButton from '../components/ExportButton.jsx';
 import LeagueSelector from '../components/LeagueSelector.jsx';
 
 const CURRENT_YEAR = new Date().getFullYear();
@@ -388,6 +389,61 @@ export default function TradeHistory() {
     setDateTo('');
   }, []);
 
+  // Function to format players and picks for CSV
+  const formatAssetsForCsv = (players, picks) => {
+    const playerNames = players.map(p => `${p.name} (${p.position})`);
+    const pickNames = picks.map(pk => {
+      let pickStr = '';
+      if (pk.year) pickStr += `${pk.year} `;
+      if (pk.round) pickStr += `Round ${pk.round}`;
+      else pickStr += 'Draft Pick';
+      return pickStr;
+    });
+    return [...playerNames, ...pickNames].join('; '); // Use semicolon to separate assets within a cell
+  };
+
+  // Function to determine classification string
+  const getClassification = (verdict, delta) => {
+    if (verdict === 'FAIR' || Math.abs(delta) < 100) {
+      return 'Even';
+    }
+    const aWon = verdict === 'A_WON';
+    return `${aWon ? 'A' : 'B'} won by ${Number(Math.abs(delta)).toLocaleString()}`;
+  };
+
+  // Prepare data for CSV export
+  const csvData = useMemo(() => {
+    if (!filteredTrades) return [];
+
+    return filteredTrades.map(trade => {
+      const dateStr = trade.created_at
+        ? new Date(trade.created_at).toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+          })
+        : '—';
+
+      return {
+        date: dateStr,
+        league: leagueId, // Using leagueId as league name is not readily available
+        'players/picks sent': formatAssetsForCsv(trade.side_b.players, trade.side_b.picks), // Side A received, so Side B sent
+        'players/picks received': formatAssetsForCsv(trade.side_a.players, trade.side_a.picks), // Side A received
+        'value delta': trade.value_delta,
+        classification: getClassification(trade.verdict, trade.value_delta),
+      };
+    });
+  }, [filteredTrades, leagueId]);
+
+  const csvHeaders = [
+    'date',
+    'league',
+    'players/picks sent',
+    'players/picks received',
+    'value delta',
+    'classification',
+  ];
+
   const anyFilterActive = playerSearch || selectedTeam || dateFrom || dateTo;
 
   return (
@@ -539,7 +595,14 @@ export default function TradeHistory() {
             )}
             <span style={{ color: '#9ca3af', fontSize: 13, marginLeft: anyFilterActive ? 'auto' : '0' }}>
               Showing {filteredTrades ? filteredTrades.length : 0} of {trades.length} trades
-            </span>
+            </span>            {/* Add ExportButton here */}
+            {filteredTrades && filteredTrades.length > 0 && (
+              <ExportButton
+                data={csvData}
+                headers={csvHeaders}
+                filename={`trade_history_${leagueId}_${season || 'all'}.csv`}
+              />
+            )}
           </div>
         )}
 

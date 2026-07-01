@@ -3,6 +3,7 @@ import LeagueSelector from '../components/LeagueSelector.jsx';
 import DivergenceCard from '../components/DivergenceCard.jsx';
 import QBPremiumCard from '../components/QBPremiumCard.jsx';
 import BreakoutCard from '../components/BreakoutCard.jsx';
+import StartSitCard from '../components/StartSitCard.jsx';
 
 const KTC_RANKINGS_URL = 'https://keeptradecut.com/api/rankings?format=superflex&numQBs=1';
 const FOUR_HORSEMEN_LEAGUE_IDS = new Set(['1315139749693886464', '1312285408079380481']);
@@ -431,6 +432,111 @@ function QBPremiumSection({ players }) {
   );
 }
 
+// Define standard starter slots
+const STARTER_SLOTS = {
+  QB: 1,
+  RB: 2,
+  WR: 2,
+  TE: 1,
+  FLEX: 1, // One flex spot (RB/WR/TE)
+};
+
+function generateStartSitRecommendations(rosterPlayers) {
+  const recommendations = {
+    QB: [],
+    RB: [],
+    WR: [],
+    TE: [],
+    FLEX: [],
+    BENCH: [],
+  };
+
+  const playersByPosition = rosterPlayers.reduce((acc, player) => {
+    const pos = String(player.position || '').toUpperCase();
+    if (['QB', 'RB', 'WR', 'TE'].includes(pos)) {
+      acc[pos] = [...(acc[pos] || []), player];
+    } else {
+      // Handle other positions or unknown as potential flex
+      acc.OTHER = [...(acc.OTHER || []), player];
+    }
+    return acc;
+  }, {});
+
+  const sortedPlayers = {};
+  for (const pos in playersByPosition) {
+    sortedPlayers[pos] = [...playersByPosition[pos]].sort(
+      (a, b) => Number(b.adjusted_value || 0) - Number(a.adjusted_value || 0)
+    );
+  }
+
+  const assignedPlayerSleeperIds = new Set();
+
+  // Fill primary positions
+  ['QB', 'RB', 'WR', 'TE'].forEach((pos) => {
+    const slots = STARTER_SLOTS[pos];
+    if (sortedPlayers[pos]) {
+      for (let i = 0; i < slots && i < sortedPlayers[pos].length; i++) {
+        const player = sortedPlayers[pos][i];
+        recommendations[pos].push(player);
+        assignedPlayerSleeperIds.add(player.sleeper_id);
+      }
+    }
+  });
+
+  // Fill FLEX
+  const flexCandidates = [
+    ...(sortedPlayers.RB || []),
+    ...(sortedPlayers.WR || []),
+    ...(sortedPlayers.TE || []),
+    ...(sortedPlayers.OTHER || []), // Include other positions for flex consideration
+  ]
+    .filter((player) => !assignedPlayerSleeperIds.has(player.sleeper_id))
+    .sort((a, b) => Number(b.adjusted_value || 0) - Number(a.adjusted_value || 0));
+
+  for (let i = 0; i < STARTER_SLOTS.FLEX && i < flexCandidates.length; i++) {
+    const player = flexCandidates[i];
+    recommendations.FLEX.push(player);
+    assignedPlayerSleeperIds.add(player.sleeper_id);
+  }
+
+  // Remaining players go to BENCH
+  rosterPlayers.forEach((player) => {
+    if (!assignedPlayerSleeperIds.has(player.sleeper_id)) {
+      recommendations.BENCH.push(player);
+    }
+  });
+
+  // Sort bench by value
+  recommendations.BENCH.sort((a, b) => Number(b.adjusted_value || 0) - Number(a.adjusted_value || 0));
+
+  return recommendations;
+}
+
+function generateWaiverWireRankings(allPlayers, allLeagueRosters) {
+  if (!allPlayers || allPlayers.length === 0 || !allLeagueRosters || allLeagueRosters.length === 0) {
+    return [];
+  }
+
+  const ownedPlayerSleeperIds = new Set();
+  allLeagueRosters.forEach((roster) => {
+    if (Array.isArray(roster.players)) {
+      roster.players.forEach((player) => {
+        if (player.sleeper_id) {
+          ownedPlayerSleeperIds.add(player.sleeper_id);
+        }
+      });
+    }
+  });
+
+  const waiverPlayers = allPlayers
+    .filter((player) => !ownedPlayerSleeperIds.has(player.sleeper_id))
+    .filter((player) => player.adjusted_value > 0) // Only show players with some value
+    .sort((a, b) => Number(b.adjusted_value || 0) - Number(a.adjusted_value || 0))
+    .slice(0, 10); // Top 10 waiver wire players
+
+  return waiverPlayers;
+}
+
 export default function Intelligence() {
   const [selectedLeague, setSelectedLeague] = useState('');
   const [alerts, setAlerts] = useState([]);
@@ -441,6 +547,9 @@ export default function Intelligence() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [breakoutCandidates, setBreakoutCandidates] = useState([]);
+  const [startSitRecommendations, setStartSitRecommendations] = useState({});
+  const [waiverWirePlayers, setWaiverWirePlayers] = useState([]);
+  const [allPlayers, setAllPlayers] = useState([]); // To store all players for waiver wire
 
   const loadIntelligence = useCallback(async (leagueId) => {
     setSelectedLeague(leagueId);
@@ -449,13 +558,25 @@ export default function Intelligence() {
     setKtcDivergences([]);
     setKtcStatus('idle');
     setBreakoutCandidates([]);
+    setStartSitRecommendations({}); // Reset
+    setWaiverWirePlayers([]); // Reset
+    setAllPlayers([]); // Reset
 
     try {
-      const [alertsResponse, newsResponse, rosterResponse, breakoutResponse] = await Promise.all([
+      const [
+        alertsResponse,
+        newsResponse,
+        rosterResponse,
+        breakoutResponse,
+        allPlayersResponse, // New
+        allRostersResponse, // New
+      ] = await Promise.all([
         fetch(`/fantasy/alerts/${leagueId}`),
         fetch('/fantasy/news'),
         fetch(`/fantasy/league/${leagueId}/roster`),
         fetch(`/fantasy/breakout-candidates?league_id=${leagueId}&limit=10`),
+        fetch('/fantasy/players/all'), // New endpoint
+        fetch(`/fantasy/league/${leagueId}/all-rosters`), // New endpoint
       ]);
 
       if (!alertsResponse.ok) {
@@ -464,19 +585,48 @@ export default function Intelligence() {
       if (!rosterResponse.ok) {
         throw new Error('Unable to load roster movers');
       }
+      // Add error handling for new responses
+      if (!allPlayersResponse.ok) {
+        console.warn('Unable to load all players for waiver wire');
+      }
+      if (!allRostersResponse.ok) {
+        console.warn('Unable to load all league rosters for waiver wire');
+      }
 
-      const [alertsData, newsData, rosterData, breakoutData] = await Promise.all([
+      const [
+        alertsData,
+        newsData,
+        rosterData,
+        breakoutData,
+        allPlayersData,
+        allRostersData,
+      ] = await Promise.all([
         alertsResponse.json(),
         optionalJson(newsResponse),
         rosterResponse.json(),
         optionalJson(breakoutResponse),
+        optionalJson(allPlayersResponse),
+        optionalJson(allRostersResponse),
       ]);
       const players = Array.isArray(rosterData.players) ? rosterData.players : [];
+      const fullPlayerList = Array.isArray(allPlayersData) ? allPlayersData : [];
+      const allLeagueRosters = Array.isArray(allRostersData) ? allRostersData : [];
+
 
       setAlerts(Array.isArray(alertsData) ? alertsData : []);
       setNewsItems(newsData);
       setRosterPlayers(players);
       setBreakoutCandidates(breakoutData);
+      setAllPlayers(fullPlayerList); // Store all players
+
+      // Generate Start/Sit recommendations
+      const startSit = generateStartSitRecommendations(players);
+      setStartSitRecommendations(startSit);
+
+      // Generate Waiver Wire rankings
+      const waiverWire = generateWaiverWireRankings(fullPlayerList, allLeagueRosters);
+      setWaiverWirePlayers(waiverWire);
+
       setKtcStatus('loading');
 
       try {
@@ -494,6 +644,9 @@ export default function Intelligence() {
       setKtcDivergences([]);
       setBreakoutCandidates([]);
       setKtcStatus('idle');
+      setStartSitRecommendations({});
+      setWaiverWirePlayers([]);
+      setAllPlayers([]);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -559,6 +712,51 @@ export default function Intelligence() {
             <section style={{ display: 'grid', gap: 12 }}>
               <h2 style={{ margin: 0 }}>Value Movers</h2>
               <ValueMoversSection players={rosterPlayers} />
+            </section>
+
+            <section style={{ display: 'grid', gap: 12 }}>
+                <h2 style={{ margin: 0 }}>Start/Sit Recommendations</h2>
+                <p style={{ color: '#667085', fontSize: 13, margin: 0 }}>
+                    Top players on your roster to start this week based on adjusted value.
+                </p>
+                <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+                    {Object.entries(startSitRecommendations).map(([position, players]) => {
+                        // Only render primary positions and FLEX
+                        if (!['QB', 'RB', 'WR', 'TE', 'FLEX'].includes(position)) {
+                            return null;
+                        }
+                        return (
+                            <div key={position} style={cardStyle()}>
+                                <h3 style={{ marginTop: 0 }}>{position}</h3>
+                                {players.length === 0 ? (
+                                    <p style={{ color: '#667085', marginBottom: 0 }}>No {position} recommendations</p>
+                                ) : (
+                                    <div style={{ display: 'grid', gap: 10 }}>
+                                        {players.map((player) => (
+                                            <StartSitCard key={player.sleeper_id} player={player} type="start" />
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            </section>
+
+            <section style={{ display: 'grid', gap: 12 }}>
+                <h2 style={{ margin: 0 }}>Waiver Wire Rankings</h2>
+                <p style={{ color: '#667085', fontSize: 13, margin: 0 }}>
+                    Top unowned players available on the waiver wire by FantasyCalc value.
+                </p>
+                <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+                    {waiverWirePlayers.length === 0 ? (
+                        <p style={{ color: '#667085', margin: 0 }}>No waiver wire players found.</p>
+                    ) : (
+                        waiverWirePlayers.map((player) => (
+                            <StartSitCard key={player.sleeper_id} player={player} type="waiver" />
+                        ))
+                    )}
+                </div>
             </section>
           </div>
         )}

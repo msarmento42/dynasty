@@ -32,6 +32,12 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python3 .github/scripts/validate_issues.py
 
+      - name: Retry idle fail-count-1/2 issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 .github/scripts/requeue_retryable.py
+
       - name: Reset stale in-progress locks
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

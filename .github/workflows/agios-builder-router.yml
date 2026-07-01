@@ -1,7 +1,15 @@
-# AGIOS Builder Router — caller for dynasty
-# Thin wrapper around the reusable workflow in msarmento42/agios-control.
-# All real routing logic lives there; do not duplicate the job body here.
-name: AGIOS Builder Router (caller)
+# AGIOS Builder Router — self-contained (reverted from cross-repo reusable
+# workflow on 2026-07-01). Root cause: agios-control is a private repo, and
+# GitHub will not resolve `uses: msarmento42/agios-control/...@main` from
+# another private repo on this plan -- every run since the reusable-workflow
+# migration (this morning) failed instantly with 0 jobs and
+# "workflow was not found" (confirmed via a live workflow_dispatch test).
+# The earlier fromJSON(job_timeout_minutes) bug was real but not the actual
+# blocker. This inlines the job body directly here (matching how it worked
+# before today's refactor) until agios-control access is resolved another way
+# (e.g. making it public, or upgrading to a plan that supports private
+# cross-repo reusable workflows).
+name: AGIOS Builder Router
 
 on:
   workflow_dispatch:
@@ -14,16 +22,86 @@ on:
   issues:
     types: [labeled]
 
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  models: read
+
+concurrency:
+  group: agios-issue-${{ github.repository }}-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
+
 jobs:
   route:
     if: >-
       github.event_name != 'issues' ||
       github.event.label.name == 'agios:ready-for-codex'
-    uses: msarmento42/agios-control/.github/workflows/agios-builder-router.yml@main
-    with:
-      issue_number: ${{ inputs.issue_number || github.event.issue.number }}
-      builder_order: ${{ inputs.builder_order || '' }}
-      frontend_path: "frontend"
-      builder_timeout_seconds: 120
-      job_timeout_minutes: 25
-    secrets: inherit
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Resolve issue number
+        id: issue
+        run: |
+          if [ -n "${{ inputs.issue_number }}" ]; then
+            echo "number=${{ inputs.issue_number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+        with:
+          path: target
+          fetch-depth: 0
+
+      - name: Checkout AGIOS control repo
+        uses: actions/checkout@v4
+        with:
+          repository: msarmento42/agios-control
+          path: agios-control
+          fetch-depth: 1
+          token: ${{ secrets.AGIOS_CONTROL_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Set up Node.js (for build verification)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: target/frontend/package-lock.json
+
+      - name: Install dependencies (for build verification)
+        run: |
+          cd "target/frontend" && npm ci --prefer-offline 2>/dev/null || npm install
+
+      - name: Clean dependency install artifacts
+        run: |
+          git -C target restore -- \
+            "frontend/package.json" \
+            "frontend/package-lock.json" 2>/dev/null || true
+
+      - name: Route builder
+        env:
+          GH_TOKEN: ${{ secrets.AGIOS_CONTROL_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_MODELS_TOKEN: ${{ secrets.GITHUB_MODELS_TOKEN || secrets.GITHUB_TOKEN }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
+          CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          python agios-control/scripts/agios_builder_router.py \
+            --issue-number "${{ steps.issue.outputs.number }}" \
+            --repo "${{ github.repository }}" \
+            --repo-path target \
+            --control-path agios-control \
+            --policy-path builder-policy.json \
+            --builder-order "${{ inputs.builder_order || '' }}" \
+            --builder-timeout-seconds 120
