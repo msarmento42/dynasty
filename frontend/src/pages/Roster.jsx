@@ -23,6 +23,33 @@ function formatCacheAge(cacheAgeSeconds) {
   return `${Math.floor(minutes / 60)}h ago`;
 }
 
+// Helper for localStorage
+const localStorageKeys = {
+  globalThreshold: 'globalValueAlertThreshold',
+  playerThresholds: 'playerValueAlertThresholds',
+};
+
+// Function to safely parse JSON from localStorage
+const getLocalStorageItem = (key, defaultValue) => {
+  try {
+    const item = window.localStorage.getItem(key);
+    return item ? JSON.parse(item) : defaultValue;
+  } catch (error) {
+    console.error(`Error parsing localStorage item "${key}":`, error);
+    return defaultValue;
+  }
+};
+
+// Function to safely set JSON to localStorage
+const setLocalStorageItem = (key, value) => {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.error(`Error setting localStorage item "${key}":`, error);
+  }
+};
+
+
 export default function Roster() {
   const [selectedLeague, setSelectedLeague] = useState(null);
   const [rosterData, setRosterData] = useState(null);
@@ -36,10 +63,24 @@ export default function Roster() {
   const [sortColumn, setSortColumn] = useState('adjusted_value'); // Default sort by value
   const [sortDirection, setSortDirection] = useState('desc'); // Default descending
 
+  // New state for alert thresholds
+  const [globalThreshold, setGlobalThreshold] = useState(() => getLocalStorageItem(localStorageKeys.globalThreshold, 5)); // Default 5%
+  const [playerThresholds, setPlayerThresholds] = useState(() => getLocalStorageItem(localStorageKeys.playerThresholds, {}));
+  const [triggeredAlerts, setTriggeredAlerts] = useState([]);
+
   const showToast = useCallback((message) => {
     setToast(message);
     window.setTimeout(() => setToast(''), 2500);
   }, []);
+
+  // Load/Save thresholds from/to localStorage
+  useEffect(() => {
+    setLocalStorageItem(localStorageKeys.globalThreshold, globalThreshold);
+  }, [globalThreshold]);
+
+  useEffect(() => {
+    setLocalStorageItem(localStorageKeys.playerThresholds, playerThresholds);
+  }, [playerThresholds]);
 
   const loadCacheStatus = useCallback(async () => {
     const response = await fetch('/fantasy/cache-status', { cache: 'no-store' });
@@ -55,6 +96,7 @@ export default function Roster() {
     setError('');
     setLeagueSettings(null);
     setValueHistory([]);
+    setTriggeredAlerts([]); // Clear alerts on new roster load
 
     const newUrl = new URL(window.location.href);
     newUrl.searchParams.set('league', leagueId);
@@ -195,6 +237,70 @@ export default function Roster() {
     return players;
   }, [rosterData, sortColumn, sortDirection]);
 
+  // Calculate alerts
+  useEffect(() => {
+    if (!sortedPlayers.length || valueHistory.length < 1) { // Need at least one historical snapshot to compare against current
+      setTriggeredAlerts([]);
+      return;
+    }
+
+    const alerts = [];
+    // Get the most recent historical snapshot for comparison
+    const latestHistoricalPlayers = valueHistory[valueHistory.length - 1].players;
+    const latestHistoricalValuesMap = new Map(latestHistoricalPlayers.map(p => [p.sleeper_id, p.value]));
+
+    sortedPlayers.forEach(player => {
+      const current_value = Number(player.adjusted_value || 0);
+      const previous_value = latestHistoricalValuesMap.get(player.sleeper_id);
+
+      // Only calculate if both current and previous values are valid and non-zero
+      if (previous_value === undefined || previous_value === 0 || current_value === 0) {
+        return;
+      }
+
+      const percentage_change = ((current_value - previous_value) / previous_value) * 100;
+      const effectiveThreshold = Number(playerThresholds[player.sleeper_id] !== undefined
+        ? playerThresholds[player.sleeper_id]
+        : globalThreshold);
+
+      if (Math.abs(percentage_change) >= effectiveThreshold) {
+        alerts.push({
+          player,
+          current_value,
+          previous_value,
+          percentage_change,
+          threshold: effectiveThreshold,
+        });
+      }
+    });
+    setTriggeredAlerts(alerts);
+  }, [sortedPlayers, valueHistory, globalThreshold, playerThresholds]);
+
+  const handleGlobalThresholdChange = useCallback((e) => {
+    const value = Number(e.target.value);
+    if (!isNaN(value) && value >= 0) {
+      setGlobalThreshold(value);
+    }
+  }, []);
+
+  const handlePlayerThresholdChange = useCallback((playerId, e) => {
+    const value = Number(e.target.value);
+    if (!isNaN(value) && value >= 0) {
+      setPlayerThresholds(prev => ({
+        ...prev,
+        [playerId]: value,
+      }));
+    }
+  }, []);
+
+  const clearPlayerThreshold = useCallback((playerId) => {
+    setPlayerThresholds(prev => {
+      const newThresholds = { ...prev };
+      delete newThresholds[playerId];
+      return newThresholds;
+    });
+  }, []);
+
   return (
     <main style={{ background: '#f6f7fb', minHeight: '100vh', padding: 24 }}>
       <section style={{ margin: '0 auto', maxWidth: 1120 }}>
@@ -253,6 +359,27 @@ export default function Roster() {
               </span>
             )}
           </div>
+          {/* Global Alert Threshold Control */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+            <label htmlFor="global-threshold" style={{ fontSize: 14, fontWeight: 500, color: '#344054' }}>
+              Global Value Alert Threshold (%):
+            </label>
+            <input
+              id="global-threshold"
+              type="number"
+              min="0"
+              step="1"
+              value={globalThreshold}
+              onChange={handleGlobalThresholdChange}
+              style={{
+                padding: '6px 10px',
+                borderRadius: 8,
+                border: '1px solid #d0d5dd',
+                width: 70,
+                fontSize: 14,
+              }}
+            />
+          </div>
         </div>
 
         {loading && <p>Loading...</p>}
@@ -287,6 +414,29 @@ export default function Roster() {
                 {Number(rosterData.total_adjusted_value || 0).toLocaleString()}
               </strong>
             </header>
+
+            {/* Alerts Panel */}
+            {triggeredAlerts.length > 0 && (
+              <div style={{ background: '#fffbeb', border: '1px solid #fdb022', borderRadius: 8, padding: 16 }}>
+                <h3 style={{ margin: '0 0 10px 0', color: '#b54708', fontSize: 16 }}>
+                  🚨 Value Change Alerts ({triggeredAlerts.length})
+                </h3>
+                <ul style={{ margin: 0, paddingLeft: 20 }}>
+                  {triggeredAlerts.map(alert => (
+                    <li key={alert.player.sleeper_id} style={{ marginBottom: 6, fontSize: 14, color: '#b54708' }}>
+                      <a href={`#player-${alert.player.sleeper_id}`} style={{ color: '#b54708', textDecoration: 'underline' }}>
+                        {alert.player.full_name}
+                      </a>:{' '}
+                      Value changed by{' '}
+                      <strong style={{ color: alert.percentage_change >= 0 ? '#027a48' : '#b42318' }}>
+                        {alert.percentage_change > 0 ? '+' : ''}{alert.percentage_change.toFixed(1)}%
+                      </strong>{' '}
+                      (Threshold: {alert.threshold}%)
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             <ValueTrendChart history={valueHistory} />
 
@@ -367,25 +517,88 @@ export default function Roster() {
                         Value{' '}
                         {sortColumn === 'adjusted_value' && (sortDirection === 'asc' ? '▲' : '▼')}
                       </th>
+                      {/* New column for Alert Threshold */}
+                      <th
+                        style={{
+                          padding: '12px 16px',
+                          textAlign: 'left',
+                          borderBottom: '1px solid #eaecf0',
+                          fontWeight: 600,
+                          color: '#475467',
+                          fontSize: 12,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Alert Threshold (%)
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {sortedPlayers.map((player) => (
-                      <tr key={player.sleeper_id}>
-                        <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#101828', fontSize: 14 }}>
-                          {player.full_name}
-                        </td>
-                        <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
-                          {player.position}
-                        </td>
-                        <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
-                          {player.age}
-                        </td>
-                        <td style={{ padding: '12px 16px', textAlign: 'right', borderBottom: '1px solid #eaecf0', color: '#101828', fontSize: 14, fontWeight: 500 }}>
-                          {Number(player.adjusted_value || 0).toLocaleString()}
-                        </td>
-                      </tr>
-                    ))}
+                    {sortedPlayers.map((player) => {
+                      const effectiveThreshold = playerThresholds[player.sleeper_id] !== undefined
+                        ? playerThresholds[player.sleeper_id]
+                        : globalThreshold;
+                      const isAlerted = triggeredAlerts.some(alert => alert.player.sleeper_id === player.sleeper_id);
+
+                      return (
+                        <tr
+                          key={player.sleeper_id}
+                          id={`player-${player.sleeper_id}`} // Anchor for alerts panel
+                          style={{ background: isAlerted ? '#fffbeb' : 'inherit' }}
+                        >
+                          <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#101828', fontSize: 14 }}>
+                            {player.full_name}
+                          </td>
+                          <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
+                            {player.position}
+                          </td>
+                          <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
+                            {player.age}
+                          </td>
+                          <td style={{ padding: '12px 16px', textAlign: 'right', borderBottom: '1px solid #eaecf0', color: '#101828', fontSize: 14, fontWeight: 500 }}>
+                            {Number(player.adjusted_value || 0).toLocaleString()}
+                          </td>
+                          {/* Alert Threshold Input */}
+                          <td style={{ padding: '8px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={effectiveThreshold}
+                                onChange={(e) => handlePlayerThresholdChange(player.sleeper_id, e)}
+                                style={{
+                                  padding: '4px 8px',
+                                  borderRadius: 6,
+                                  border: '1px solid #d0d5dd',
+                                  width: 60,
+                                  fontSize: 13,
+                                }}
+                              />
+                              {playerThresholds[player.sleeper_id] !== undefined && (
+                                <button
+                                  onClick={() => clearPlayerThreshold(player.sleeper_id)}
+                                  title="Clear custom threshold and use global default"
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    color: '#98a2b3',
+                                    fontSize: 16,
+                                    padding: 0,
+                                    lineHeight: 1,
+                                  }}
+                                >
+                                  &times;
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
