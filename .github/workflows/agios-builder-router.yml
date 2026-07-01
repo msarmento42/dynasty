@@ -1,85 +1,29 @@
-# AGIOS Builder Router caller — dynasty repo
+# AGIOS Builder Router — caller for dynasty
+# Thin wrapper around the reusable workflow in msarmento42/agios-control.
+# All real routing logic lives there; do not duplicate the job body here.
 name: AGIOS Builder Router (caller)
+
 on:
   workflow_dispatch:
     inputs:
-      issue_number: { required: true }
-      builder_order: { required: false, default: "" }
+      issue_number:
+        required: true
+      builder_order:
+        required: false
+        default: ""
   issues:
     types: [labeled]
+
 jobs:
   route:
     if: >-
       github.event_name != 'issues' ||
       github.event.label.name == 'agios:ready-for-codex'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write
-      issues: write
-      pull-requests: write
-      models: read
-    concurrency:
-      group: agios-issue-${{ github.event.issue.number || inputs.issue_number }}
-      cancel-in-progress: false
-    steps:
-      - name: Resolve issue number
-        id: issue
-        run: |
-          if [ -n "${{ inputs.issue_number }}" ]; then
-            echo "number=${{ inputs.issue_number }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Set up Node.js (for frontend build verification)
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Checkout target repo
-        uses: actions/checkout@v4
-        with:
-          path: target
-          fetch-depth: 0
-
-      - name: Checkout AGIOS control repo
-        uses: actions/checkout@v4
-        with:
-          repository: msarmento42/agios-control
-          path: agios-control
-          fetch-depth: 1
-          token: ${{ secrets.AGIOS_CONTROL_TOKEN }}
-
-      - name: Install frontend dependencies (for build verification)
-        run: |
-          cd target/frontend && npm ci --prefer-offline 2>/dev/null || npm install
-
-      - name: Clean dependency install artifacts
-        run: |
-          git -C target restore -- frontend/package.json frontend/package-lock.json 2>/dev/null || true
-
-      - name: Route builder
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-          CEREBRAS_MODEL: "llama3.1-8b"
-          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
-          CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          python agios-control/scripts/agios_builder_router.py \
-            --issue-number "${{ steps.issue.outputs.number }}" \
-            --repo "${{ github.repository }}" \
-            --repo-path target \
-            --control-path agios-control \
-            --policy-path builder-policy.json \
-            --builder-order "${{ inputs.builder_order || '' }}" \
-            --builder-timeout-seconds 240
+    uses: msarmento42/agios-control/.github/workflows/agios-builder-router.yml@main
+    with:
+      issue_number: ${{ inputs.issue_number || github.event.issue.number }}
+      builder_order: ${{ inputs.builder_order || '' }}
+      frontend_path: "frontend"
+      builder_timeout_seconds: 120
+      job_timeout_minutes: 25
+    secrets: inherit
