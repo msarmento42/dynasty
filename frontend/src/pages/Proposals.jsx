@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
 import VerdictChip from '../components/VerdictChip.jsx';
+import ConfidenceBadge from '../components/ConfidenceBadge.jsx';
 
 function sideText(side) {
   const players = side?.player_names || side?.players || side?.player_ids || [];
@@ -78,7 +79,10 @@ export default function Proposals() {
               >
                 <div style={{ alignItems: 'center', display: 'flex', gap: 10, justifyContent: 'space-between' }}>
                   <strong>#{proposal.rank} vs {proposal.their_owner || `Roster ${proposal.their_roster_id}`}</strong>
-                  <VerdictChip verdict={proposal.verdict} />
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <ConfidenceBadge confidence={proposal.data_confidence} />
+                    <VerdictChip verdict={proposal.verdict} />
+                  </div>
                 </div>
                 <p><strong>You send:</strong> {sideText(proposal.side_a)}</p>
                 <p><strong>You receive:</strong> {sideText(proposal.side_b)}</p>

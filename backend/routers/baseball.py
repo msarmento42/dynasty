@@ -17,6 +17,32 @@ from backend.services.mlb_stats import (
 router = APIRouter(prefix="/api/baseball", tags=["baseball"])
 
 
+def baseball_confidence(row) -> dict:
+    warnings = []
+    if not row["dynasty_value"]:
+        warnings.append("missing manual dynasty value")
+    if not row["updated_at"]:
+        warnings.append("missing MLB cache timestamp")
+
+    if not warnings:
+        level = "high"
+        label = "Fresh"
+    elif row["dynasty_value"]:
+        level = "medium"
+        label = "Review"
+    else:
+        level = "low"
+        label = "Low trust"
+
+    return {
+        "level": level,
+        "label": label,
+        "source": "MLB Stats API + manual values",
+        "updated_at": row["updated_at"],
+        "warnings": warnings,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Player search & profiles
 # ---------------------------------------------------------------------------
@@ -75,7 +101,8 @@ async def get_baseball_roster(roster_name: str = "My Baseball Roster"):
             """
             SELECT r.mlb_id, r.acquired_date, r.notes,
                    p.name, p.position, p.team, p.level, p.age, p.sport_id,
-                   p.bats, p.throws, p.draft_year, p.debut_year, p.dynasty_value
+                   p.bats, p.throws, p.draft_year, p.debut_year, p.dynasty_value,
+                   p.updated_at
             FROM baseball_rosters r
             LEFT JOIN baseball_players p ON p.mlb_id = r.mlb_id
             WHERE r.roster_name = ?
@@ -101,9 +128,17 @@ async def get_baseball_roster(roster_name: str = "My Baseball Roster"):
             "dynasty_value": row["dynasty_value"],
             "acquired_date": row["acquired_date"],
             "notes": row["notes"],
+            "data_confidence": baseball_confidence(row),
         })
 
-    return {"roster_name": roster_name, "players": players, "count": len(players)}
+    levels = [p["data_confidence"]["level"] for p in players]
+    summary_level = "low" if "low" in levels else ("medium" if "medium" in levels else "high")
+    return {
+        "roster_name": roster_name,
+        "players": players,
+        "count": len(players),
+        "data_confidence": {"level": summary_level, "label": summary_level.title()},
+    }
 
 
 @router.post("/roster/{mlb_id}")

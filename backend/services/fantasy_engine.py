@@ -1,6 +1,7 @@
 """Fantasy value engine - league-adjusted player values, pick valuation, daily sync."""
 
 import math
+from datetime import datetime, timezone
 
 # -- League configs ---------------------------------------------------------
 
@@ -126,6 +127,84 @@ def pick_value(round: int, years_away: int, n_teams: int) -> int:
 TRADE_POSITIONS = ("QB", "RB", "WR", "TE")
 
 
+def _parse_timestamp(value: str):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def data_confidence(
+    *,
+    value: int = 0,
+    updated_at: str = None,
+    stale_after_hours: int = 36,
+    source: str = "FantasyCalc",
+) -> dict:
+    """Summarize whether a value can be trusted by the UI and recommendation engine."""
+    warnings = []
+    timestamp = _parse_timestamp(updated_at)
+    age_hours = None
+
+    if not value:
+        warnings.append("missing value")
+    if timestamp is None:
+        warnings.append("missing timestamp")
+    else:
+        age_hours = max(0, round((datetime.now(timezone.utc) - timestamp).total_seconds() / 3600, 1))
+        if age_hours > stale_after_hours:
+            warnings.append(f"stale {source} data")
+
+    if not warnings:
+        level = "high"
+        label = "Fresh"
+    elif len(warnings) == 1 and value:
+        level = "medium"
+        label = "Review"
+    else:
+        level = "low"
+        label = "Low trust"
+
+    return {
+        "level": level,
+        "label": label,
+        "source": source,
+        "updated_at": updated_at,
+        "age_hours": age_hours,
+        "warnings": warnings,
+    }
+
+
+def aggregate_confidence(players: list) -> dict:
+    """Roll player confidence metadata into a recommendation-level signal."""
+    if not players:
+        return {"level": "low", "label": "No players", "warnings": ["missing player data"]}
+
+    levels = [p.get("data_confidence", {}).get("level", "low") for p in players]
+    warnings = []
+    for player in players:
+        for warning in player.get("data_confidence", {}).get("warnings", []):
+            if warning not in warnings:
+                warnings.append(warning)
+
+    if "low" in levels:
+        level = "low"
+        label = "Low trust"
+    elif "medium" in levels:
+        level = "medium"
+        label = "Review"
+    else:
+        level = "high"
+        label = "Fresh"
+
+    return {"level": level, "label": label, "warnings": warnings}
+
+
 def positional_counts(players: list) -> dict:
     """Count fantasy-relevant player positions in a list of enriched players."""
     counts = {position: 0 for position in TRADE_POSITIONS}
@@ -183,10 +262,15 @@ def enrich_player(player: dict, league_id: str) -> dict:
     trend = player.get("trend_30d", 0) or 0
 
     enriched = dict(player)
+    enriched["full_name"] = enriched.get("full_name") or enriched.get("name")
     enriched["adjusted_value"] = adjusted_value(base_val, position, league_id)
     enriched["career_stage"] = classify_career_stage(position, age) if age > 0 else "unknown"
     enriched["years_in_prime_remaining"] = years_in_prime_remaining(position, age) if age > 0 else 0.0
     enriched["trajectory"] = "+" if trend > 100 else ("-" if trend < -100 else "=")
+    enriched["data_confidence"] = data_confidence(
+        value=enriched["adjusted_value"],
+        updated_at=enriched.get("updated_at"),
+    )
 
     premium = qb_premium(enriched, league_id)
     if premium:
