@@ -1,121 +1,120 @@
 #!/usr/bin/env python3
-"""
-AGIOS validate_issues.py
-For each open agios:ready-for-codex issue, checks required fields and flags contradictions.
-On failure: removes agios:ready-for-codex, applies agios:needs-scope, posts comment.
-"""
-import json, os, re, subprocess, sys
-from datetime import datetime
+"""Validate AGIOS queue issues and move malformed items to needs-scope."""
+import json
+import os
+import re
+import subprocess
+from datetime import datetime, timezone
 
 REPO = os.environ.get("GITHUB_REPOSITORY", "")
-GH_TOKEN = os.environ.get("GH_TOKEN", "")
+QUEUE_LABELS = ["agios:ready-for-codex", "agios:escalate-codex"]
 
-REQUIRED_FIELDS = [
-    ("Type",                  r"\*\*Type:\*\*\s*(\S+)"),
-    ("Objective",             r"\*\*Objective:\*\*\s*(.+)"),
-    ("Allowed paths",         r"\*\*Allowed paths:\*\*"),
-    ("Blocked paths",         r"\*\*Blocked paths:\*\*"),
+REQUIRED = [
+    ("Type", r"\*\*Type:\*\*\s*(RESEARCH|MAINTENANCE|IMPROVEMENT|EXPERIMENT)"),
+    ("Objective", r"\*\*Objective:\*\*\s*\S"),
+    ("Allowed paths", r"\*\*Allowed paths:\*\*"),
+    ("Blocked paths", r"\*\*Blocked paths:\*\*"),
     ("Implementation instructions", r"\*\*Implementation instructions:\*\*"),
-    ("Acceptance criteria",   r"- \[ \]"),
-    ("Verification command",  r"\*\*Verification command:\*\*\s*```(?:bash|shell|sh)?\s*\n\s*\S[\s\S]*?\n```"),
-    ("Rollback plan",         r"\*\*Rollback plan:\*\*\s*(.+)"),
-    ("Risk level",            r"\*\*Risk level:\*\*\s*(LOW|MEDIUM|HIGH)"),
-    ("Auto-merge allowed",    r"\*\*Auto-merge allowed:\*\*\s*(yes|no)"),
-    ("Success metric",        r"\*\*Success metric:\*\*\s*(.+)"),
+    ("Acceptance criteria", r"- \[ \]\s*\S"),
+    ("Verification command", r"\*\*Verification command:\*\*\s*```(?:bash|shell|sh)?\s*\n\s*\S[\s\S]*?\n```"),
+    ("Rollback plan", r"\*\*Rollback plan:\*\*\s*\S"),
+    ("Risk level", r"\*\*Risk level:\*\*\s*(LOW|MEDIUM|HIGH)"),
+    ("Auto-merge allowed", r"\*\*Auto-merge allowed:\*\*\s*(yes|no)"),
 ]
-
-VALID_TYPES = {"IMPROVEMENT", "MAINTENANCE", "RESEARCH", "EXPERIMENT"}
 
 
 def run(cmd):
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    return r.stdout.strip()
+    return subprocess.run(cmd, shell=True, capture_output=True, text=True).stdout.strip()
 
 
-def get_issues():
-    out = run(f'gh issue list --repo "{REPO}" --label "agios:ready-for-codex" --state open --json number,title,body --limit 100')
-    try:
-        return json.loads(out)
-    except Exception:
-        return []
+def section(body, heading):
+    match = re.search(
+        rf"\*\*{re.escape(heading)}:\*\*\s*(.*?)(?=\n\*\*[^*\n]+:\*\*|\Z)",
+        body or "",
+        re.I | re.S,
+    )
+    return match.group(1).strip() if match else ""
 
 
-def validate(issue):
-    body = issue.get("body") or ""
+def list_section(body, heading):
+    raw = section(body, heading)
+    values = []
+    for line in raw.splitlines():
+        cleaned = line.strip().lstrip("-").strip()
+        if cleaned and not cleaned.startswith("```"):
+            values.append(cleaned)
+    return values
+
+
+def verification_command(body):
+    raw = section(body, "Verification command")
+    match = re.search(r"```(?:bash|shell|sh)?\s*\n(.*?)\n```", raw, re.I | re.S)
+    return (match.group(1) if match else raw).strip()
+
+
+def problems_for(title, body):
     problems = []
+    for name, pattern in REQUIRED:
+        if not re.search(pattern, body or "", re.I | re.M):
+            problems.append(f"Missing or empty: **{name}:**")
+    if re.search(r"\*\*Risk level:\*\*\s*HIGH", body or "", re.I) and re.search(r"\*\*Auto-merge allowed:\*\*\s*yes", body or "", re.I):
+        problems.append("Contradiction: HIGH risk cannot auto-merge")
+    if re.search(r"\bTBD\b|\[placeholder\]", body or "", re.I):
+        problems.append("Contains placeholder text")
 
-    # Check required fields
-    for name, pattern in REQUIRED_FIELDS:
-        if not re.search(pattern, body, re.IGNORECASE | re.MULTILINE):
-            problems.append(f"Missing or empty: `**{name}:**`")
+    title_starts_infra = title.lower().startswith("agios infra:")
+    allowed_paths = list_section(body, "Allowed paths")
+    blocked_paths = list_section(body, "Blocked paths")
+    verification = verification_command(body)
 
-    # Validate Type value
-    m = re.search(r"\*\*Type:\*\*\s*(\S+)", body, re.IGNORECASE)
-    if m and m.group(1).upper() not in VALID_TYPES:
-        problems.append(f"Invalid Type `{m.group(1)}` — must be one of: IMPROVEMENT, MAINTENANCE, RESEARCH, EXPERIMENT")
+    forbidden_allowed = []
+    for path in allowed_paths:
+        if re.search(r"(^|/)\.github(/|$)|(^|/)\.agios(/|$)|(^|/)\.env$|\.env", path):
+            forbidden_allowed.append(path)
+    if forbidden_allowed and not title_starts_infra:
+        problems.append("Allowed paths include blocked infrastructure or secret paths: " + ", ".join(forbidden_allowed))
 
-    # Contradiction: Risk HIGH + Auto-merge yes
-    risk_high = bool(re.search(r"\*\*Risk level:\*\*\s*HIGH", body, re.IGNORECASE))
-    auto_yes  = bool(re.search(r"\*\*Auto-merge allowed:\*\*\s*yes", body, re.IGNORECASE))
-    if risk_high and auto_yes:
-        problems.append("Contradiction: `Risk level: HIGH` + `Auto-merge allowed: yes`")
+    blocked_normalized = {item.rstrip("/") for item in blocked_paths}
+    for path in allowed_paths:
+        normalized = path.rstrip("/")
+        if normalized in blocked_normalized:
+            problems.append(f"Allowed path also appears in blocked paths: {path}")
 
-    # Contradiction: Allowed paths contains protected dirs
-    allowed_section = re.search(r"\*\*Allowed paths:\*\*(.*?)(\*\*|\Z)", body, re.DOTALL)
-    if allowed_section:
-        section_text = allowed_section.group(1)
-        for protected in [".github/", ".agios/", ".env"]:
-            if protected in section_text:
-                problems.append(f"Contradiction: Allowed paths contains protected path `{protected}`")
-
-    # Flag placeholder content
-    if re.search(r"\bTBD\b|\[placeholder\]", body, re.IGNORECASE):
-        problems.append("Body contains placeholder text (`TBD` or `[placeholder]`)")
+    if re.search(r"(?<![\w.-])python(?![\w.-])", verification):
+        problems.append("Verification command must use python3, not python")
+    if "/workspace" in verification:
+        problems.append("Verification command must run from the repository root, not /workspace")
+    if re.search(r"\|\s*tail\b", verification):
+        problems.append("Verification command must not hide failures with tail-truncated output")
 
     return problems
 
 
-def flag_issue(num, problems):
-    # Remove ready-for-codex, add needs-scope
-    run(f'gh issue edit {num} --repo "{REPO}" --remove-label "agios:ready-for-codex"')
-    run(f'gh issue edit {num} --repo "{REPO}" --add-label "agios:needs-scope"')
-
-    # Post comment
-    problem_list = "\n".join(f"- {p}" for p in problems)
-    comment = f"""[AGIOS QUEUE HEALTH] Issue failed schema validation at {datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')}
-
-**Problems found:**
-{problem_list}
-
-Label changed: `agios:ready-for-codex` → `agios:needs-scope`
-Fix the issues above and re-apply `agios:ready-for-codex` to re-queue."""
-    run(f'gh issue comment {num} --repo "{REPO}" --body {json.dumps(comment)}')
-
-
 def main():
     if not REPO:
-        print("GITHUB_REPOSITORY not set — skipping validation")
+        print("GITHUB_REPOSITORY not set")
         return
-
-    issues = get_issues()
-    print(f"Validating {len(issues)} ready-for-codex issue(s)...")
-
-    flagged = 0
-    for issue in issues:
-        num   = issue["number"]
-        title = issue["title"]
-        problems = validate(issue)
-        if problems:
-            print(f"  WARNING #{num} {title} — {len(problems)} problem(s)")
-            for p in problems:
-                print(f"      {p}")
-            flag_issue(num, problems)
-            flagged += 1
-        else:
-            print(f"  OK #{num} {title}")
-
-    print(f"\nValidation complete: {flagged}/{len(issues)} issue(s) flagged")
-
+    seen = set()
+    for queue_label in QUEUE_LABELS:
+        raw = run(f'gh issue list --repo "{REPO}" --label "{queue_label}" --state open --json number,title,body --limit 100')
+        issues = json.loads(raw or "[]")
+        for issue in issues:
+            num = issue["number"]
+            if num in seen:
+                continue
+            seen.add(num)
+            problems = problems_for(issue.get("title") or "", issue.get("body") or "")
+            if not problems:
+                print(f"OK #{num} {issue['title']}")
+                continue
+            run(f'gh issue edit {num} --repo "{REPO}" --remove-label "{queue_label}"')
+            run(f'gh issue edit {num} --repo "{REPO}" --add-label "agios:needs-scope"')
+            body = "[AGIOS QUEUE HEALTH] Issue failed schema validation at {}\n\n{}".format(
+                datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "\n".join(f"- {p}" for p in problems),
+            )
+            run(f'gh issue comment {num} --repo "{REPO}" --body {json.dumps(body)}')
+            print(f"FLAGGED #{num} {issue['title']}")
 
 if __name__ == "__main__":
     main()
