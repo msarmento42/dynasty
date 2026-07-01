@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
 import PositionalImpactDisplay from '../components/PositionalImpactDisplay.jsx';
 import VerdictChip from '../components/VerdictChip.jsx';
+import ConfidenceBadge from '../components/ConfidenceBadge.jsx';
 
 function playerLabel(player) {
   return `${player.name} (${player.position || 'FA'}${player.team ? `, ${player.team}` : ''})`;
@@ -60,7 +61,10 @@ function ValueList({ title, players }) {
             style={{ display: 'flex', gap: 12, justifyContent: 'space-between' }}
           >
             <span>{player.name}</span>
-            <span>{Number(player.adjusted_value || player.value || 0).toLocaleString()}</span>
+            <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <ConfidenceBadge confidence={player.data_confidence} />
+              {Number(player.adjusted_value || player.value || 0).toLocaleString()}
+            </span>
           </div>
         ))}
       </div>
@@ -228,6 +232,7 @@ export default function TradeBuilder() {
             ) : (
               <div style={{ display: 'grid', gap: 14 }}>
                 <VerdictChip verdict={result.verdict} />
+                <ConfidenceBadge confidence={result.data_confidence} />
                 <strong>Side A: {Number(result.side_a_value || 0).toLocaleString()}</strong>
                 <strong>Side B: {Number(result.side_b_value || 0).toLocaleString()}</strong>
                 <ValueList title="You send" players={valuesForSide(result, 'side_a_players', sideA)} />

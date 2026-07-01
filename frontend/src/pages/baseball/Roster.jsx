@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import ConfidenceBadge from '../../components/ConfidenceBadge.jsx';
 import { LevelBadge, PosBadge } from './BaseballHome.jsx';
 
 const API = import.meta.env.VITE_API_URL || '';
@@ -18,6 +19,7 @@ function groupByPosition(players) {
 
 export default function BaseballRoster() {
   const [players, setPlayers] = useState([]);
+  const [confidence, setConfidence] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -37,6 +39,7 @@ export default function BaseballRoster() {
       if (!res.ok) throw new Error('Failed to load roster');
       const data = await res.json();
       setPlayers(data.players || []);
+      setConfidence(data.data_confidence || null);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -122,6 +125,11 @@ export default function BaseballRoster() {
             <p style={{ margin: '3px 0 0', color: 'var(--text-secondary)', fontSize: 13 }}>
               Dynasty roster · {players.length} player{players.length !== 1 ? 's' : ''}
             </p>
+            {confidence && (
+              <div style={{ marginTop: 8 }}>
+                <ConfidenceBadge confidence={confidence} />
+              </div>
+            )}
           </div>
         </div>
 
@@ -275,6 +283,7 @@ function PositionGroup({ pos, players, onRemove, removing, onNavigate, editingNo
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</span>
                 <LevelBadge level={p.level} />
+                <ConfidenceBadge confidence={p.data_confidence} />
               </div>
               <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 2 }}>
                 {[p.team, p.age ? `Age ${p.age}` : null].filter(Boolean).join(' · ')}

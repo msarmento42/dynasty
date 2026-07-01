@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import aiosqlite
 
 from backend.database import DB_PATH
-from backend.services.fantasy_engine import LEAGUE_CONFIG, pick_value
+from backend.services.fantasy_engine import LEAGUE_CONFIG, aggregate_confidence, pick_value
 
 
 POSITIONS = ["QB", "RB", "WR", "TE"]
@@ -217,6 +217,7 @@ async def generate_proposals(league_id: str) -> list:
                 "side_a_players": side_a_players,
                 "side_b_players": side_b_players,
                 "justification": _justification(my_surplus, their_surplus, side_a_players, side_b_players),
+                "data_confidence": aggregate_confidence([*side_a_players, *side_b_players]),
                 "_score": score,
             })
 

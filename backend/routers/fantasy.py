@@ -14,7 +14,13 @@ from pydantic import BaseModel
 
 from backend.database import DB_PATH
 from backend.scripts import daily_sync
-from backend.services.fantasy_engine import LEAGUE_CONFIG, enrich_player, pick_value, trade_positional_impact
+from backend.services.fantasy_engine import (
+    LEAGUE_CONFIG,
+    aggregate_confidence,
+    enrich_player,
+    pick_value,
+    trade_positional_impact,
+)
 from backend.services.proposals import generate_proposals
 from backend.services import sleeper as sleeper_svc
 
@@ -63,7 +69,7 @@ async def get_players_for_ids(
         return []
     placeholders = ",".join("?" * len(player_ids))
     async with db.execute(
-        f"SELECT sleeper_id, name, position, team, age, value_sf, value_1qb, trend_30d, injury_status "
+        f"SELECT sleeper_id, name, position, team, age, value_sf, value_1qb, trend_30d, injury_status, updated_at "
         f"FROM players WHERE sleeper_id IN ({placeholders})",
         player_ids,
     ) as cur:
@@ -73,7 +79,7 @@ async def get_players_for_ids(
         p = {
             "sleeper_id": r[0], "name": r[1], "position": r[2], "team": r[3],
             "age": r[4], "value_sf": r[5] or 0, "value_1qb": r[6] or 0,
-            "trend_30d": r[7] or 0, "injury_status": r[8],
+            "trend_30d": r[7] or 0, "injury_status": r[8], "updated_at": r[9],
         }
         players.append(enrich_player(p, league_id))
     return players
@@ -122,6 +128,56 @@ def parse_cache_timestamp(value: str) -> Optional[datetime]:
     return parsed.astimezone(timezone.utc)
 
 
+def freshness_payload(updated_at: str, source: str, stale_after_hours: int = 36) -> dict:
+    parsed = parse_cache_timestamp(updated_at)
+    if parsed is None:
+        return {
+            "source": source,
+            "updated_at": updated_at,
+            "age_hours": None,
+            "status": "missing",
+            "message": f"{source} has no successful sync timestamp.",
+        }
+
+    age_hours = max(0, round((datetime.now(timezone.utc) - parsed).total_seconds() / 3600, 1))
+    status = "fresh" if age_hours <= stale_after_hours else "stale"
+    return {
+        "source": source,
+        "updated_at": parsed.isoformat(),
+        "age_hours": age_hours,
+        "status": status,
+        "message": f"{source} is {age_hours} hours old.",
+    }
+
+
+async def table_count(db: aiosqlite.Connection, table_name: str) -> int:
+    async with db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,)) as cur:
+        exists = await cur.fetchone()
+    if not exists:
+        return 0
+    async with db.execute(f"SELECT COUNT(*) FROM {table_name}") as cur:
+        row = await cur.fetchone()
+    return row[0] if row else 0
+
+
+async def latest_value(db: aiosqlite.Connection, table_name: str, column_name: str):
+    async with db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,)) as cur:
+        exists = await cur.fetchone()
+    if not exists:
+        return None
+    async with db.execute(f"SELECT MAX({column_name}) FROM {table_name}") as cur:
+        row = await cur.fetchone()
+    return row[0] if row else None
+
+
+def issue_status(status: str) -> str:
+    if status == "fresh":
+        return "ok"
+    if status == "stale":
+        return "warning"
+    return "critical"
+
+
 @router.get("/cache-status")
 async def get_cache_status():
     """Return the latest known player value cache timestamp and age."""
@@ -135,6 +191,104 @@ async def get_cache_status():
 
     age_seconds = max(0, int((datetime.now(timezone.utc) - cached_at).total_seconds()))
     return {"cached_at": cached_at.isoformat(), "cache_age_seconds": age_seconds}
+
+
+@router.get("/data-doctor")
+async def get_data_doctor():
+    """Return data quality checks and suggested sync/import fixes."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        players_count = await table_count(db, "players")
+        rosters_count = await table_count(db, "rosters")
+        baseball_players_count = await table_count(db, "baseball_players")
+        baseball_rosters_count = await table_count(db, "baseball_rosters")
+        baseball_stats_count = await table_count(db, "baseball_stats")
+        zero_value_count = 0
+        stale_player_count = 0
+
+        if players_count:
+            async with db.execute(
+                "SELECT COUNT(*) FROM players WHERE COALESCE(value_sf, 0) = 0 AND COALESCE(value_1qb, 0) = 0"
+            ) as cur:
+                zero_value_count = (await cur.fetchone())[0]
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=36)).isoformat()
+            async with db.execute(
+                "SELECT COUNT(*) FROM players WHERE updated_at IS NULL OR updated_at < ?",
+                (cutoff,),
+            ) as cur:
+                stale_player_count = (await cur.fetchone())[0]
+
+        latest_player_sync = await latest_value(db, "players", "updated_at")
+        latest_roster_sync = await latest_value(db, "rosters", "updated_at")
+        latest_news = await latest_value(db, "news_items", "published_at")
+        latest_snapshot = await latest_value(db, "player_snapshots", "snapshot_date")
+        latest_baseball = await latest_value(db, "baseball_players", "updated_at")
+
+    freshness = [
+        freshness_payload(latest_player_sync or latest_snapshot, "Player values"),
+        freshness_payload(latest_roster_sync, "Roster syncs", stale_after_hours=24),
+        freshness_payload(latest_news, "News feed", stale_after_hours=12),
+        freshness_payload(latest_baseball, "Baseball player cache", stale_after_hours=168),
+    ]
+
+    checks = [
+        {
+            "name": "Player value coverage",
+            "status": "critical" if players_count == 0 or zero_value_count > 0 else "ok",
+            "detail": f"{zero_value_count} of {players_count} football players have no usable value.",
+            "action": "Run value refresh",
+            "action_url": "/",
+        },
+        {
+            "name": "Stale football imports",
+            "status": "warning" if stale_player_count > 0 else "ok",
+            "detail": f"{stale_player_count} football players are older than 36 hours or missing timestamps.",
+            "action": "Refresh values",
+            "action_url": "/",
+        },
+        {
+            "name": "Roster sync coverage",
+            "status": "critical" if rosters_count == 0 else "ok",
+            "detail": f"{rosters_count} synced roster rows are available.",
+            "action": "Run sync",
+            "action_url": "/",
+        },
+        {
+            "name": "Baseball manual values",
+            "status": "warning" if baseball_rosters_count > 0 and baseball_players_count == 0 else "ok",
+            "detail": f"{baseball_players_count} cached baseball players and {baseball_stats_count} stats rows.",
+            "action": "Open baseball roster",
+            "action_url": "/baseball/roster",
+        },
+        {
+            "name": "Recommendation confidence",
+            "status": "critical" if players_count == 0 or rosters_count == 0 else "ok",
+            "detail": "Trade recommendations inherit the lowest confidence from included player values.",
+            "action": "Generate proposals",
+            "action_url": "/proposals",
+        },
+    ]
+
+    for item in freshness:
+        checks.append({
+            "name": item["source"],
+            "status": issue_status(item["status"]),
+            "detail": item["message"],
+            "action": "Inspect source",
+            "action_url": "/data-doctor",
+        })
+
+    worst = "ok"
+    if any(check["status"] == "critical" for check in checks):
+        worst = "critical"
+    elif any(check["status"] == "warning" for check in checks):
+        worst = "warning"
+
+    return {
+        "status": worst,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "freshness": freshness,
+        "checks": checks,
+    }
 
 
 @router.post("/refresh-cache")
@@ -218,6 +372,7 @@ async def get_my_roster(league_id: str):
         "my_roster_id": my_roster_id,
         "players": players,
         "total_adjusted_value": total,
+        "data_confidence": aggregate_confidence(players),
     }
 
 
@@ -279,6 +434,7 @@ async def get_all_rosters(league_id: str):
                 "is_mine": roster_id == my_roster_id,
                 "total_adjusted_value": total,
                 "players": players,
+                "data_confidence": aggregate_confidence(players),
             })
 
     result.sort(key=lambda r: r["total_adjusted_value"], reverse=True)
@@ -337,6 +493,7 @@ async def evaluate_trade(req: TradeRequest):
         "side_a_picks": side_a_picks,
         "side_b_picks": side_b_picks,
         "positional_impact": trade_positional_impact(side_a_players, side_b_players),
+        "data_confidence": aggregate_confidence([*side_a_players, *side_b_players]),
     }
 
 
