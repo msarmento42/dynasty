@@ -350,7 +350,11 @@ export default function Roster() {
                   Share
                 </button>
                 {rosterData.players && rosterData.players.length > 0 && (
-                  <ExportButton players={rosterData.players} />
+                  <ExportButton
+                    data={rosterData.players}
+                    headers={['full_name', 'position', 'age', 'data_confidence', 'adjusted_value']}
+                    filename={`roster_${selectedLeague}.csv`}
+                  />
                 )}
               </>
             )}
