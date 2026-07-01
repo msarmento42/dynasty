@@ -137,3 +137,21 @@ Deep analytics that make this better than any dedicated baseball dynasty app.
 | #112 | I04 | feat: unified cross-sport dashboard |
 
 *Already in AGIOS queue: #44 (value history), #45 (CSV export), #57 (trade calc), #58 (multi-source rankings), #59 (roster news), #63 (player comparison)*
+
+---
+
+## Parallel work: git worktrees
+
+When running more than one Claude Code / Cowork session against this repo at
+the same time, use a worktree per session instead of separate full clones or
+switching branches back and forth in one directory — avoids uncommitted
+changes in one session getting clobbered by a checkout in another. (This repo
+has accumulated several ad-hoc `-issue-NN` clone directories over time from
+doing this manually — worktrees replace that pattern.)
+
+```
+scripts/new-worktree.sh <branch-name>
+```
+
+Creates `../<repo-name>-<branch-name>/` on a new branch, ready to open as its
+own session. `git worktree remove ../<repo-name>-<branch-name>` when done.
