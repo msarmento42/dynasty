@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
 
 const POS_COLORS = {
@@ -104,6 +104,8 @@ export default function WaiverWire() {
   const [error, setError] = useState('');
   const [activePos, setActivePos] = useState('ALL');
   const [targets, setTargets] = useState(new Set());
+  const [sortColumn, setSortColumn] = useState('value_sf'); // Default sort by value
+  const [sortDirection, setSortDirection] = useState('desc'); // Default descending
 
   const load = useCallback(async (id) => {
     if (!id) return;
@@ -135,11 +137,52 @@ export default function WaiverWire() {
     });
   }
 
-  const players = data
+  const handleSort = useCallback((column) => {
+    if (sortColumn === column) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortColumn(column);
+      setSortDirection('desc'); // Default to descending when changing column
+    }
+  }, [sortColumn, sortDirection]);
+
+  const filteredPlayers = data
     ? (activePos === 'ALL'
         ? data.free_agents
         : data.free_agents.filter((p) => p.position === activePos))
     : [];
+
+  const sortableHeadersMap = {
+    'Player': 'name',
+    'Pos': 'position',
+    'Team': 'team',
+    'Dynasty Value': 'value_sf',
+    'Injury': 'injury_status',
+    'Depth': 'depth_chart_order',
+  };
+
+  const sortedPlayers = useMemo(() => {
+    if (!filteredPlayers || filteredPlayers.length === 0) return [];
+
+    const sorted = [...filteredPlayers].sort((a, b) => {
+      let valA = a[sortColumn];
+      let valB = b[sortColumn];
+
+      // Handle specific column types for sorting
+      if (sortColumn === 'value_sf' || sortColumn === 'depth_chart_order') {
+        valA = Number(valA) || 0;
+        valB = Number(valB) || 0;
+      } else if (sortColumn === 'name' || sortColumn === 'position' || sortColumn === 'team' || sortColumn === 'injury_status') {
+        valA = String(valA || '').toLowerCase();
+        valB = String(valB || '').toLowerCase();
+      }
+
+      if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
+      if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+    return sorted;
+  }, [filteredPlayers, sortColumn, sortDirection]);
 
   return (
     <main style={{ background: '#f6f7fb', minHeight: '100vh', padding: 24 }}>
@@ -184,26 +227,42 @@ export default function WaiverWire() {
               <table style={{ borderCollapse: 'collapse', width: '100%' }}>
                 <thead>
                   <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                    {['Player', 'Pos', 'Team', 'Dynasty Value', 'Injury', 'Depth', ''].map((h) => (
-                      <th
-                        key={h}
-                        style={{
-                          color: '#6b7280',
-                          fontSize: 12,
-                          fontWeight: 700,
-                          letterSpacing: '0.04em',
-                          padding: '10px 14px',
-                          textAlign: 'left',
-                          textTransform: 'uppercase',
-                        }}
-                      >
-                        {h}
-                      </th>
-                    ))}
+                    {['Player', 'Pos', 'Team', 'Dynasty Value', 'Injury', 'Depth', ''].map((h) => {
+                      const columnKey = sortableHeadersMap[h];
+                      const isSortable = !!columnKey;
+                      const isActiveColumn = sortColumn === columnKey;
+
+                      return (
+                        <th
+                          key={h}
+                          onClick={isSortable ? () => handleSort(columnKey) : undefined}
+                          style={{
+                            color: '#6b7280',
+                            fontSize: 12,
+                            fontWeight: 700,
+                            letterSpacing: '0.04em',
+                            padding: '10px 14px',
+                            textAlign: 'left',
+                            textTransform: 'uppercase',
+                            cursor: isSortable ? 'pointer' : 'default',
+                            userSelect: 'none',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            {h}
+                            {isActiveColumn && (
+                              <span style={{ fontSize: 10 }}>
+                                {sortDirection === 'asc' ? '▲' : '▼'}
+                              </span>
+                            )}
+                          </div>
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody>
-                  {players.length === 0 ? (
+                  {sortedPlayers.length === 0 ? (
                     <tr>
                       <td colSpan={7}>
                         <div className="flex flex-col items-center py-16 text-gray-500">
@@ -213,7 +272,7 @@ export default function WaiverWire() {
                       </td>
                     </tr>
                   ) : (
-                    players.map((p, idx) => {
+                    sortedPlayers.map((p, idx) => {
                       const isTarget = targets.has(p.sleeper_id);
                       return (
                         <tr
