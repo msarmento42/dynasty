@@ -161,7 +161,10 @@ export default function WaiverWire() {
     'Depth': 'depth_chart_order',
   };
 
-  const sortedPlayers = useMemo(() => {
+  const sortedPlayers = useMemo(() => {  const TIER_BREAK_THRESHOLD_PERCENT = 15; // A 15% drop in value signifies a new tier
+  const TIER_NAMES = ['Elite', 'Strong', 'Solid', 'Depth', 'Deep Depth', 'Fringe']; // More names than typically needed
+
+
     if (!filteredPlayers || filteredPlayers.length === 0) return [];
 
     const sorted = [...filteredPlayers].sort((a, b) => {
@@ -183,6 +186,48 @@ export default function WaiverWire() {
     });
     return sorted;
   }, [filteredPlayers, sortColumn, sortDirection]);
+  const tieredPlayers = useMemo(() => {
+    if (!sortedPlayers || sortedPlayers.length === 0) return [];
+
+    const tiers = [];
+    let currentTierPlayers = [];
+    let tierIndex = 0;
+
+    for (let i = 0; i < sortedPlayers.length; i++) {
+      const currentPlayer = sortedPlayers[i];
+      currentTierPlayers.push(currentPlayer);
+
+      if (i < sortedPlayers.length - 1) {
+        const nextPlayer = sortedPlayers[i + 1];
+        // Only consider tier breaks if current player has a positive value to avoid division by zero
+        // and to ensure meaningful percentage drops.
+        if (currentPlayer.value_sf > 0) {
+          const valueDiff = currentPlayer.value_sf - nextPlayer.value_sf;
+          const percentageDrop = (valueDiff / currentPlayer.value_sf) * 100;
+
+          // Condition for a tier break: significant drop AND current tier has at least one player
+          if (percentageDrop >= TIER_BREAK_THRESHOLD_PERCENT && currentTierPlayers.length > 0) {
+            tiers.push({
+              name: TIER_NAMES[tierIndex] || `Tier ${tierIndex + 1}`,
+              players: currentTierPlayers,
+            });
+            currentTierPlayers = [];
+            tierIndex++;
+          }
+        }
+      }
+    }
+
+    // Add the last tier if any players remain
+    if (currentTierPlayers.length > 0) {
+      tiers.push({
+        name: TIER_NAMES[tierIndex] || `Tier ${tierIndex + 1}`,
+        players: currentTierPlayers,
+      });
+    }
+
+    return tiers;
+  }, [sortedPlayers]);
 
   return (
     <main style={{ background: '#f6f7fb', minHeight: '100vh', padding: 24 }}>
@@ -262,7 +307,7 @@ export default function WaiverWire() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedPlayers.length === 0 ? (
+                  {tieredPlayers.length === 0 ? (
                     <tr>
                       <td colSpan={7}>
                         <div className="flex flex-col items-center py-16 text-gray-500">
@@ -272,57 +317,70 @@ export default function WaiverWire() {
                       </td>
                     </tr>
                   ) : (
-                    sortedPlayers.map((p, idx) => {
-                      const isTarget = targets.has(p.sleeper_id);
-                      return (
-                        <tr
-                          key={p.sleeper_id}
-                          style={{
-                            background: idx % 2 === 0 ? '#fff' : '#fafafa',
-                            borderBottom: '1px solid #f3f4f6',
-                          }}
-                        >
-                          <td style={{ fontWeight: 600, padding: '10px 14px' }}>
-                            <div style={{ alignItems: 'center', display: 'flex', gap: 6 }}>
-                              <span style={{ color: '#9ca3af', fontSize: 12, width: 20 }}>{idx + 1}</span>
-                              {p.name}
-                            </div>
-                          </td>
-                          <td style={{ padding: '10px 14px' }}>
-                            <PosBadge pos={p.position} />
-                          </td>
-                          <td style={{ color: '#374151', padding: '10px 14px' }}>{p.team || '—'}</td>
-                          <td style={{ padding: '10px 14px' }}>
-                            <ValueChip value={p.value_sf} />
-                          </td>
-                          <td style={{ padding: '10px 14px' }}>
-                            <InjuryBadge status={p.injury_status} />
-                          </td>
-                          <td style={{ padding: '10px 14px' }}>
-                            <DepthBadge depth={p.depth_chart_order} />
-                          </td>
-                          <td style={{ padding: '10px 14px' }}>
-                            <button
-                              onClick={() => toggleTarget(p.sleeper_id)}
-                              title={isTarget ? 'Remove from trade targets' : 'Add to trade targets'}
-                              style={{
-                                background: isTarget ? '#ede9fe' : '#f3f4f6',
-                                border: isTarget ? '1px solid #c4b5fd' : '1px solid #e5e7eb',
-                                borderRadius: 6,
-                                color: isTarget ? '#7c3aed' : '#374151',
-                                cursor: 'pointer',
-                                fontSize: 12,
-                                fontWeight: 600,
-                                padding: '4px 10px',
-                                whiteSpace: 'nowrap',
-                              }}
-                            >
-                              {isTarget ? '★ Targeted' : '+ Target'}
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
+                    (() => {
+                      let overallRank = 0;
+                      return tieredPlayers.map((tier, tierIdx) => (
+                        <React.Fragment key={`tier-group-${tierIdx}`}>
+                          <tr style={{ background: '#e0f2fe', borderBottom: '2px solid #90cdf4' }}>
+                            <td colSpan={7} style={{ padding: '8px 14px', fontWeight: 700, fontSize: 14, color: '#1e40af' }}>
+                              {tier.name} ({tier.players.length} players)
+                            </td>
+                          </tr>
+                          {tier.players.map((p) => {
+                            overallRank++;
+                            const isTarget = targets.has(p.sleeper_id);
+                            return (
+                              <tr
+                                key={p.sleeper_id}
+                                style={{
+                                  background: (overallRank % 2 === 0 ? '#fff' : '#fafafa'),
+                                  borderBottom: '1px solid #f3f4f6',
+                                }}
+                              >
+                                <td style={{ fontWeight: 600, padding: '10px 14px' }}>
+                                  <div style={{ alignItems: 'center', display: 'flex', gap: 6 }}>
+                                    <span style={{ color: '#9ca3af', fontSize: 12, width: 20 }}>{overallRank}</span>
+                                    {p.name}
+                                  </div>
+                                </td>
+                                <td style={{ padding: '10px 14px' }}>
+                                  <PosBadge pos={p.position} />
+                                </td>
+                                <td style={{ color: '#374151', padding: '10px 14px' }}>{p.team || '—'}</td>
+                                <td style={{ padding: '10px 14px' }}>
+                                  <ValueChip value={p.value_sf} />
+                                </td>
+                                <td style={{ padding: '10px 14px' }}>
+                                  <InjuryBadge status={p.injury_status} />
+                                </td>
+                                <td style={{ padding: '10px 14px' }}>
+                                  <DepthBadge depth={p.depth_chart_order} />
+                                </td>
+                                <td style={{ padding: '10px 14px' }}>
+                                  <button
+                                    onClick={() => toggleTarget(p.sleeper_id)}
+                                    title={isTarget ? 'Remove from trade targets' : 'Add to trade targets'}
+                                    style={{
+                                      background: isTarget ? '#ede9fe' : '#f3f4f6',
+                                      border: isTarget ? '1px solid #c4b5fd' : '1px solid #e5e7eb',
+                                      borderRadius: 6,
+                                      color: isTarget ? '#7c3aed' : '#374151',
+                                      cursor: 'pointer',
+                                      fontSize: 12,
+                                      fontWeight: 600,
+                                      padding: '4px 10px',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    {isTarget ? '★ Targeted' : '+ Target'}
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </React.Fragment>
+                      ));
+                    })()
                   )}
                 </tbody>
               </table>
