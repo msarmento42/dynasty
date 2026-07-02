@@ -4,6 +4,7 @@ import DivergenceCard from '../components/DivergenceCard.jsx';
 import QBPremiumCard from '../components/QBPremiumCard.jsx';
 import BreakoutCard from '../components/BreakoutCard.jsx';
 import StartSitCard from '../components/StartSitCard.jsx';
+import LoadingSkeleton from '../components/LoadingSkeleton.jsx';
 
 const KTC_RANKINGS_URL = 'https://keeptradecut.com/api/rankings?format=superflex&numQBs=1';
 const FOUR_HORSEMEN_LEAGUE_IDS = new Set(['1315139749693886464', '1312285408079380481']);
@@ -432,6 +433,71 @@ function QBPremiumSection({ players }) {
   );
 }
 
+function SkeletonGrid({ count = 3, cardProps = {}, minWidth = 260 }) {
+  return (
+    <div style={{ display: 'grid', gap: 12, gridTemplateColumns: `repeat(auto-fit, minmax(${minWidth}px, 1fr))` }}>
+      {Array.from({ length: count }).map((_, index) => (
+        <LoadingSkeleton key={index} {...cardProps} />
+      ))}
+    </div>
+  );
+}
+
+function AlertsSkeleton() {
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      <LoadingSkeleton rows={1} metrics={1} style={{ borderColor: '#b54708' }} />
+      <LoadingSkeleton rows={1} metrics={1} style={{ borderColor: '#027a48' }} />
+    </div>
+  );
+}
+
+function NewsSkeleton() {
+  return (
+    <div style={{ display: 'grid', gap: 12 }}>
+      <LoadingSkeleton avatar rows={2} />
+      <LoadingSkeleton avatar rows={2} />
+    </div>
+  );
+}
+
+function MoversSkeleton() {
+  return (
+    <div style={{ display: 'grid', gap: 14, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+      {['Top risers', 'Top fallers'].map((title) => (
+        <section key={title} style={cardStyle()}>
+          <h3 style={{ marginTop: 0 }}>{title}</h3>
+          <div style={{ display: 'grid', gap: 10 }}>
+            <LoadingSkeleton badge={false} rows={0} metrics={2} style={{ padding: 0, border: 0 }} />
+            <LoadingSkeleton badge={false} rows={0} metrics={2} style={{ padding: 0, border: 0 }} />
+            <LoadingSkeleton badge={false} rows={0} metrics={2} style={{ padding: 0, border: 0 }} />
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function StartSitSkeleton() {
+  return (
+    <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+      {['QB', 'RB', 'WR', 'TE', 'FLEX'].map((position) => (
+        <div key={position} style={cardStyle()}>
+          <h3 style={{ marginTop: 0 }}>{position}</h3>
+          <div style={{ display: 'grid', gap: 10 }}>
+            <LoadingSkeleton rows={0} metrics={1} style={{ background: '#ecfdf3', borderColor: '#027a48', padding: 12 }} />
+            <LoadingSkeleton rows={0} metrics={1} style={{ background: '#ecfdf3', borderColor: '#027a48', padding: 12 }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function WaiverSkeleton() {
+  return <SkeletonGrid count={4} cardProps={{ rows: 0, metrics: 1, style: { background: '#e0f2fe', borderColor: '#004d99', padding: 12 } }} />;
+}
+
 // Define standard starter slots
 const STARTER_SLOTS = {
   QB: 1,
@@ -668,50 +734,57 @@ export default function Intelligence() {
           <LeagueSelector onSelect={loadIntelligence} />
         </header>
 
-        {loading && <p>Loading...</p>}
         {error && <p style={{ color: '#b42318' }}>{error}</p>}
 
-        {!loading && !error && selectedLeague && (
+        {!error && selectedLeague && (
           <div style={{ display: 'grid', gap: 22 }}>
             <section style={{ display: 'grid', gap: 12 }}>
               <h2 style={{ margin: 0 }}>Alerts</h2>
-              <AlertsSection alerts={alerts} />
+              {loading ? <AlertsSkeleton /> : <AlertsSection alerts={alerts} />}
             </section>
 
             <section style={{ display: 'grid', gap: 12 }}>
               <h2 style={{ margin: 0 }}>News Feed</h2>
-              <NewsSection newsItems={newsItems} />
+              {loading ? <NewsSkeleton /> : <NewsSection newsItems={newsItems} />}
             </section>
 
             <section style={{ display: 'grid', gap: 12 }}>
               <h2 style={{ margin: 0 }}>KTC Divergence</h2>
-              <KtcDivergenceSection divergences={ktcDivergences} status={ktcStatus} />
+              {loading ? (
+                <SkeletonGrid count={3} cardProps={{ metrics: 3 }} />
+              ) : (
+                <KtcDivergenceSection divergences={ktcDivergences} status={ktcStatus} />
+              )}
             </section>
 
             {isFourHorsemenLeague && (
               <section style={{ display: 'grid', gap: 12 }}>
                 <h2 style={{ margin: 0 }}>4QB Premium</h2>
-                <QBPremiumSection players={rosterPlayers} />
+                {loading ? <SkeletonGrid count={3} cardProps={{ metrics: 3 }} /> : <QBPremiumSection players={rosterPlayers} />}
               </section>
             )}
 
-            {breakoutCandidates.length > 0 && (
+            {(loading || breakoutCandidates.length > 0) && (
               <section style={{ display: 'grid', gap: 12 }}>
                 <h2 style={{ margin: 0 }}>Breakout Candidates</h2>
                 <p style={{ color: '#667085', fontSize: 13, margin: 0 }}>
                   Rising players with below-market value — buy-low targets.
                 </p>
-                <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
-                  {breakoutCandidates.map((p) => (
-                    <BreakoutCard key={p.sleeper_id} player={p} />
-                  ))}
-                </div>
+                {loading ? (
+                  <SkeletonGrid count={3} cardProps={{ metrics: 2 }} />
+                ) : (
+                  <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
+                    {breakoutCandidates.map((p) => (
+                      <BreakoutCard key={p.sleeper_id} player={p} />
+                    ))}
+                  </div>
+                )}
               </section>
             )}
 
             <section style={{ display: 'grid', gap: 12 }}>
               <h2 style={{ margin: 0 }}>Value Movers</h2>
-              <ValueMoversSection players={rosterPlayers} />
+              {loading ? <MoversSkeleton /> : <ValueMoversSection players={rosterPlayers} />}
             </section>
 
             <section style={{ display: 'grid', gap: 12 }}>
@@ -719,7 +792,7 @@ export default function Intelligence() {
                 <p style={{ color: '#667085', fontSize: 13, margin: 0 }}>
                     Top players on your roster to start this week based on adjusted value.
                 </p>
-                <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+                {loading ? <StartSitSkeleton /> : <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
                     {Object.entries(startSitRecommendations).map(([position, players]) => {
                         // Only render primary positions and FLEX
                         if (!['QB', 'RB', 'WR', 'TE', 'FLEX'].includes(position)) {
@@ -740,7 +813,7 @@ export default function Intelligence() {
                             </div>
                         );
                     })}
-                </div>
+                </div>}
             </section>
 
             <section style={{ display: 'grid', gap: 12 }}>
@@ -748,7 +821,7 @@ export default function Intelligence() {
                 <p style={{ color: '#667085', fontSize: 13, margin: 0 }}>
                     Top unowned players available on the waiver wire by FantasyCalc value.
                 </p>
-                <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+                {loading ? <WaiverSkeleton /> : <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
                     {waiverWirePlayers.length === 0 ? (
                         <p style={{ color: '#667085', margin: 0 }}>No waiver wire players found.</p>
                     ) : (
@@ -756,7 +829,7 @@ export default function Intelligence() {
                             <StartSitCard key={player.sleeper_id} player={player} type="waiver" />
                         ))
                     )}
-                </div>
+                </div>}
             </section>
           </div>
         )}
