@@ -201,6 +201,9 @@ export default function PlayerProfile() {
   }, [playerId]);
 
   const positionColor = player ? (POSITION_COLORS[player.position] || '#475569') : '#475569';
+  const sevenDayValueChange = player?.seven_day_value_change;
+  const sevenDayDelta = sevenDayValueChange ? Number(sevenDayValueChange.delta || 0) : null;
+  const sevenDayDeltaPct = sevenDayValueChange ? Number(sevenDayValueChange.delta_pct || 0) : null;
 
   return (
     <main style={{ background: '#f6f7fb', minHeight: '100vh', padding: 24 }}>
@@ -285,7 +288,12 @@ export default function PlayerProfile() {
               }}
             >
               {[
-                { label: 'Dynasty Value', value: Number(player.dynasty_value || 0).toLocaleString() },
+                {
+                  label: 'Dynasty Value',
+                  value: Number(player.dynasty_value || 0).toLocaleString(),
+                  sevenDayDelta,
+                  sevenDayDeltaPct,
+                },
                 { label: 'Positional Rank', value: `#${player.positional_rank}` },
                 { label: 'SF Value', value: Number(player.dynasty_value_sf || 0).toLocaleString() },
                 { label: '1QB Value', value: Number(player.dynasty_value_1qb || 0).toLocaleString() },
@@ -296,7 +304,10 @@ export default function PlayerProfile() {
                 ...(player.breakout_score != null
                   ? [{ label: 'Breakout Score', value: player.breakout_score }]
                   : []),
-              ].map(({ label, value }) => (
+              ].map(({ label, value, sevenDayDelta, sevenDayDeltaPct }) => {
+                const hasSevenDayChange = sevenDayDelta !== null && !Number.isNaN(sevenDayDelta);
+                const changeIsPositive = Number(sevenDayDelta) >= 0;
+                return (
                 <article
                   key={label}
                   style={{
@@ -309,8 +320,38 @@ export default function PlayerProfile() {
                 >
                   <div style={{ color: '#667085', fontSize: 13, marginBottom: 6 }}>{label}</div>
                   <strong style={{ fontSize: 22 }}>{value}</strong>
+                  {hasSevenDayChange && (
+                    <div
+                      aria-label={`7-day change ${changeIsPositive ? 'positive' : 'negative'} ${sevenDayDelta}`}
+                      title={
+                        sevenDayValueChange?.snapshot_date
+                          ? `Compared with ${sevenDayValueChange.snapshot_date}`
+                          : 'Compared with 7 days ago'
+                      }
+                      style={{
+                        alignItems: 'center',
+                        background: changeIsPositive ? '#dcfce7' : '#fee2e2',
+                        borderRadius: 999,
+                        color: changeIsPositive ? '#166534' : '#991b1b',
+                        display: 'inline-flex',
+                        fontSize: 12,
+                        fontWeight: 800,
+                        gap: 4,
+                        marginTop: 8,
+                        padding: '3px 8px',
+                      }}
+                    >
+                      <span>{changeIsPositive ? '▲' : '▼'}</span>
+                      <span>
+                        {changeIsPositive ? '+' : ''}{Number(sevenDayDelta).toLocaleString()} / {' '}
+                        {changeIsPositive ? '+' : ''}{sevenDayDeltaPct}%
+                      </span>
+                      <span style={{ color: changeIsPositive ? '#15803d' : '#b42318', fontWeight: 700 }}>7d</span>
+                    </div>
+                  )}
                 </article>
-              ))}
+                );
+              })}
             </div>
 
             {/* Recent Stats */}

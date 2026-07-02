@@ -823,6 +823,29 @@ async def get_player_profile(player_id: str, response: Response):
             for snap in snap_rows
         ]
 
+        seven_day_value_change = None
+        seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+        async with db.execute(
+            "SELECT value_sf, snapshot_date FROM player_snapshots "
+            "WHERE sleeper_id = ? AND snapshot_date <= ? AND value_sf IS NOT NULL "
+            "ORDER BY snapshot_date DESC LIMIT 1",
+            (player_id, seven_days_ago),
+        ) as cur:
+            old_value_row = await cur.fetchone()
+
+        current_value = player_value or 0
+        if old_value_row and current_value:
+            old_value = old_value_row[0] or 0
+            if old_value:
+                delta = current_value - old_value
+                seven_day_value_change = {
+                    "delta": delta,
+                    "delta_pct": round((delta / old_value) * 100, 1),
+                    "current_value": current_value,
+                    "value_7d_ago": old_value,
+                    "snapshot_date": old_value_row[1],
+                }
+
         # Comparable players: same position, similar value (within ±15%)
         value_target = player_value or 1
         low, high = value_target * 0.85, value_target * 1.15
@@ -857,6 +880,7 @@ async def get_player_profile(player_id: str, response: Response):
         "dynasty_value": enriched.get("adjusted_value", player_value),
         "dynasty_value_sf": row[5],
         "dynasty_value_1qb": row[6],
+        "seven_day_value_change": seven_day_value_change,
         "trend_30d": enriched.get("trend_30d", 0),
         "injury_status": enriched.get("injury_status"),
         "career_stage": career_stage,
