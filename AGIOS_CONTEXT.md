@@ -103,3 +103,9 @@ The backlog currently includes 33+ football feature issues (#113-#145) covering:
 - UX: global search, saved filter presets, comparison bookmarks, CSV export, settings page
 
 When generating new issues, prefer baseball features (underrepresented in the backlog) or deeper football analytics not yet covered.
+
+## Marcus OS boundary
+
+Dynasty is a standalone decision engine and stays that way. One integration exists: an exporter that writes strategy/review summaries (trade rationale, season reviews, league strategy) as Markdown for Marcus's private vault. Do not generate issues that move dynasty features into life-os or duplicate vault content here. Exports are summaries — never full roster/valuation dumps.
+
+---
