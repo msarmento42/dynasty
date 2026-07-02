@@ -40,6 +40,7 @@ def _normalize_item(item: dict[str, Any]) -> dict[str, Any] | None:
         "value": _as_int(item.get("value")),
         "rank": _as_int(item.get("overallRank") or item.get("rank")),
         "pos_rank": _as_int(item.get("positionRank") or item.get("posRank")),
+        "trend_7d": _as_int(item.get("trend7Day") or item.get("trend7day") or item.get("trend7d")),
         "trend_30d": _as_int(item.get("trend30Day")),
     }
 
