@@ -125,6 +125,8 @@ def pick_value(round: int, years_away: int, n_teams: int) -> int:
 # -- Positional impact ------------------------------------------------------
 
 TRADE_POSITIONS = ("QB", "RB", "WR", "TE")
+VALUE_TREND_BUY_THRESHOLD = 8.0
+VALUE_TREND_SELL_THRESHOLD = -8.0
 
 
 def _parse_timestamp(value: str):
@@ -137,6 +139,104 @@ def _parse_timestamp(value: str):
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _days_between(start: datetime, end: datetime) -> float:
+    return max(0.0, (end - start).total_seconds() / 86400)
+
+
+def linear_regression_slope(points: list) -> float:
+    """Return value points per day for dated value history."""
+    if len(points) < 2:
+        return 0.0
+
+    dated_points = [
+        (_parse_timestamp(point.get("snapshot_date")), float(point.get("value") or 0))
+        for point in points
+        if point.get("snapshot_date") and point.get("value") is not None
+    ]
+    dated_points = [(date, value) for date, value in dated_points if date is not None]
+    if len(dated_points) < 2:
+        return 0.0
+
+    first_date = dated_points[0][0]
+    xs = [_days_between(first_date, date) for date, _ in dated_points]
+    ys = [value for _, value in dated_points]
+    x_mean = sum(xs) / len(xs)
+    y_mean = sum(ys) / len(ys)
+    denominator = sum((x - x_mean) ** 2 for x in xs)
+    if denominator == 0:
+        return 0.0
+
+    numerator = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys))
+    return round(numerator / denominator, 2)
+
+
+def player_value_trend(snapshot_rows: list) -> dict:
+    """Aggregate player value snapshots into 30/90-day windows and a buy/sell signal."""
+    points = []
+    for row in snapshot_rows:
+        snapshot_date = row.get("snapshot_date")
+        value = row.get("value_sf")
+        parsed = _parse_timestamp(snapshot_date)
+        if parsed is None or value is None:
+            continue
+        points.append({
+            "snapshot_date": parsed.date().isoformat(),
+            "value": int(value),
+            "parsed_date": parsed,
+        })
+
+    points.sort(key=lambda item: item["parsed_date"])
+    if not points:
+        return {
+            "window_30d": [],
+            "window_90d": [],
+            "slope_30d": 0.0,
+            "slope_90d": 0.0,
+            "signal": "HOLD",
+            "signal_reason": "Not enough value history yet.",
+        }
+
+    latest_date = points[-1]["parsed_date"]
+
+    def window(days: int) -> list:
+        cutoff_days = max(0, days)
+        return [
+            {"snapshot_date": point["snapshot_date"], "value": point["value"]}
+            for point in points
+            if _days_between(point["parsed_date"], latest_date) <= cutoff_days
+        ]
+
+    window_30d = window(30)
+    window_90d = window(90)
+    slope_30d = linear_regression_slope(window_30d)
+    slope_90d = linear_regression_slope(window_90d)
+    blended_slope = (slope_30d * 0.7) + (slope_90d * 0.3)
+
+    if blended_slope >= VALUE_TREND_BUY_THRESHOLD:
+        signal = "BUY"
+        reason = "Recent value trend is rising faster than the buy threshold."
+    elif blended_slope <= VALUE_TREND_SELL_THRESHOLD:
+        signal = "SELL"
+        reason = "Recent value trend is falling faster than the sell threshold."
+    else:
+        signal = "HOLD"
+        reason = "Recent value trend is within the hold band."
+
+    return {
+        "window_30d": window_30d,
+        "window_90d": window_90d,
+        "slope_30d": slope_30d,
+        "slope_90d": slope_90d,
+        "blended_slope": round(blended_slope, 2),
+        "signal": signal,
+        "signal_reason": reason,
+        "thresholds": {
+            "buy": VALUE_TREND_BUY_THRESHOLD,
+            "sell": VALUE_TREND_SELL_THRESHOLD,
+        },
+    }
 
 
 def data_confidence(

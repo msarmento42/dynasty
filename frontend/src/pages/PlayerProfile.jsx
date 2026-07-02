@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import ValueTrendChart from '../components/ValueTrendChart';
 
 const POSITION_COLORS = {
   QB: '#dc2626',
@@ -178,6 +179,8 @@ const ComparablePlayersSkeleton = () => (
 export default function PlayerProfile() {
   const { playerId } = useParams();
   const [player, setPlayer] = useState(null);
+  const [valueTrend, setValueTrend] = useState(null);
+  const [valueTrendError, setValueTrendError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -185,6 +188,8 @@ export default function PlayerProfile() {
     if (!playerId) return;
     setLoading(true);
     setError('');
+    setValueTrend(null);
+    setValueTrendError('');
     fetch(`/fantasy/players/${playerId}/profile`)
       .then((res) => {
         if (!res.ok) throw new Error(`Player not found (${res.status})`);
@@ -192,12 +197,21 @@ export default function PlayerProfile() {
       })
       .then((data) => {
         setPlayer(data);
+        setValueTrend(data.value_trend || null);
         setLoading(false);
       })
       .catch((err) => {
         setError(err.message);
         setLoading(false);
       });
+
+    fetch(`/fantasy/players/${playerId}/value-trend`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Value trend unavailable (${res.status})`);
+        return res.json();
+      })
+      .then((data) => setValueTrend(data))
+      .catch((err) => setValueTrendError(err.message));
   }, [playerId]);
 
   const positionColor = player ? (POSITION_COLORS[player.position] || '#475569') : '#475569';
@@ -353,6 +367,18 @@ export default function PlayerProfile() {
                 );
               })}
             </div>
+
+            <ValueTrendChart
+              history={valueTrend?.window_90d || []}
+              title="Player value trend"
+              emptyMessage="Need at least two player value snapshots before the BUY/SELL/HOLD signal can render."
+              signal={valueTrend?.signal}
+              slope30={valueTrend?.slope_30d ?? null}
+              slope90={valueTrend?.slope_90d ?? null}
+            />
+            {valueTrendError && (
+              <p style={{ color: '#b42318', margin: '-8px 0 0' }}>{valueTrendError}</p>
+            )}
 
             {/* Recent Stats */}
             {player.recent_stats && player.recent_stats.length > 0 && (

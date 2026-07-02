@@ -3,8 +3,10 @@
 import asyncio
 import json
 import random
+import sys
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import List, Optional
 
 import aiosqlite
@@ -12,17 +14,22 @@ from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from backend.database import DB_PATH
-from backend.scripts import daily_sync
-from backend.services.fantasy_engine import (
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from backend.database import DB_PATH  # noqa: E402
+from backend.scripts import daily_sync  # noqa: E402
+from backend.services.fantasy_engine import (  # noqa: E402
     LEAGUE_CONFIG,
     aggregate_confidence,
     enrich_player,
     pick_value,
+    player_value_trend,
     trade_positional_impact,
 )
-from backend.services.proposals import generate_proposals
-from backend.services import sleeper as sleeper_svc
+from backend.services.proposals import generate_proposals  # noqa: E402
+from backend.services import sleeper as sleeper_svc  # noqa: E402
 
 router = APIRouter()
 PLAYER_VALUE_CACHE_CONTROL = "public, max-age=3600"
@@ -846,6 +853,18 @@ async def get_player_profile(player_id: str, response: Response):
                     "snapshot_date": old_value_row[1],
                 }
 
+        async with db.execute(
+            "SELECT snapshot_date, value_sf FROM player_snapshots "
+            "WHERE sleeper_id = ? AND value_sf IS NOT NULL "
+            "ORDER BY snapshot_date ASC",
+            (player_id,),
+        ) as cur:
+            trend_rows = await cur.fetchall()
+        value_trend = player_value_trend([
+            {"snapshot_date": trend_row[0], "value_sf": trend_row[1]}
+            for trend_row in trend_rows
+        ])
+
         # Comparable players: same position, similar value (within ±15%)
         value_target = player_value or 1
         low, high = value_target * 0.85, value_target * 1.15
@@ -887,8 +906,44 @@ async def get_player_profile(player_id: str, response: Response):
         "years_in_prime_remaining": years_in_prime,
         "positional_rank": positional_rank,
         "breakout_score": breakout_score,
+        "value_trend": value_trend,
         "recent_stats": recent_stats,
         "comparable_players": comparable_players,
+    }
+
+
+@router.get("/players/{player_id}/value-trend")
+async def get_player_value_trend(player_id: str, response: Response):
+    """Return 30/90-day value windows and a BUY/SELL/HOLD signal for a player."""
+    response.headers["Cache-Control"] = PLAYER_VALUE_CACHE_CONTROL
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT sleeper_id, name, position, team, value_sf FROM players WHERE sleeper_id = ?",
+            (player_id,),
+        ) as cur:
+            player_row = await cur.fetchone()
+        if not player_row:
+            raise HTTPException(status_code=404, detail=f"Player {player_id} not found.")
+
+        async with db.execute(
+            "SELECT snapshot_date, value_sf FROM player_snapshots "
+            "WHERE sleeper_id = ? AND value_sf IS NOT NULL "
+            "ORDER BY snapshot_date ASC",
+            (player_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+    trend = player_value_trend([
+        {"snapshot_date": row[0], "value_sf": row[1]}
+        for row in rows
+    ])
+    return {
+        "sleeper_id": player_row[0],
+        "name": player_row[1],
+        "position": player_row[2],
+        "team": player_row[3],
+        "current_value": player_row[4] or 0,
+        **trend,
     }
 
 
