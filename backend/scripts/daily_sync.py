@@ -9,6 +9,7 @@ import aiosqlite
 
 from backend.services import fantasycalc, sleeper, trade_history
 from backend.services.fantasy_engine import LEAGUE_CONFIG, enrich_player
+from backend.services.snapshot import take_snapshot
 from backend.services.sleeper import LEAGUES
 
 
@@ -360,6 +361,16 @@ async def main() -> None:
     print(f"[{now}] Starting daily fantasy sync...")
 
     async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            INSERT INTO sync_log (sync_type, status, message, ran_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            ("daily_sync", "running", "daily sync started", now),
+        )
+        sync_log_id = int(cur.lastrowid)
+        await db.commit()
+
         print("  Fetching FantasyCalc SF values...")
         sf_players = await fantasycalc.fetch_sf_values()
         print("  Fetching FantasyCalc 1QB values...")
@@ -370,9 +381,13 @@ async def main() -> None:
         print(f"  Synced {n} players")
 
         total_new_trades = 0
+        snapshot_ids = []
         for league_id, config in LEAGUE_CONFIG.items():
             print(f"  Syncing league: {config['name']}...")
             await sync_league(db, league_id, config)
+            snapshot_id = await take_snapshot(db, league_id, source_sync_id=sync_log_id)
+            snapshot_ids.append(snapshot_id)
+            print(f"  Snapshot {snapshot_id} captured for {config['name']}")
             new_trades = await trade_history.ingest_trade_history(league_id)
             await trade_history.compute_calibration(league_id)
             await trade_history.build_manager_profiles(league_id)
@@ -384,17 +399,18 @@ async def main() -> None:
 
         await db.execute(
             """
-            INSERT INTO sync_log (sync_type, status, message, ran_at)
-            VALUES (?, ?, ?, ?)
+            UPDATE sync_log
+            SET status=?, message=?
+            WHERE id=?
             """,
             (
-                "daily_sync",
                 "success",
                 (
                     f"{n} players synced, {len(LEAGUE_CONFIG)} leagues, "
-                    f"{total_new_trades} new trades, {alert_count} alerts"
+                    f"{total_new_trades} new trades, {alert_count} alerts, "
+                    f"snapshots={snapshot_ids}"
                 ),
-                now,
+                sync_log_id,
             ),
         )
         await db.commit()
