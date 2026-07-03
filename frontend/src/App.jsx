@@ -23,6 +23,8 @@ import ValueHistory from './pages/ValueHistory.jsx';
 import Rookies from './pages/Rookies.jsx';
 import MockDraft from './pages/MockDraft.jsx';
 import DataDoctor from './pages/DataDoctor.jsx';
+import Dashboard from './pages/Dashboard.jsx';
+import SimulationLab from './pages/SimulationLab.jsx';
 
 const POS_COLORS = {
   QB: { bg: '#e0f2fe', text: '#0369a1' },
@@ -393,6 +395,7 @@ export default function App() {
     <BrowserRouter>
       <nav style={{ flexWrap: 'wrap', gap: '4px 0' }}>
         <Link to="/">Roster</Link>
+        <Link to="/dashboard">Dashboard</Link>
         <Link to="/trade">Trade Builder</Link>
         <Link to="/proposals">Proposals</Link>
         <Link to="/playoffs">Playoffs</Link>
@@ -409,6 +412,7 @@ export default function App() {
         <Link to="/rookies">Rookies</Link>
         <Link to="/mock-draft">Mock Draft</Link>
         <Link to="/data-doctor">Data Doctor</Link>
+        <Link to="/simulation-lab">Simulation Lab</Link>
         <span style={{ color: 'var(--border-color)', margin: '0 4px' }}>|</span>
         <Link to="/baseball">⚾ Baseball</Link>
         <Link to="/baseball/draft">⚾ Draft Board</Link>
@@ -436,6 +440,7 @@ export default function App() {
       </nav>
       <Routes>
         <Route path="/" element={<Roster />} />
+        <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/trade" element={<TradeBuilder />} />
         <Route path="/proposals" element={<Proposals />} />
         <Route path="/playoffs" element={<Playoffs />} />
@@ -453,6 +458,7 @@ export default function App() {
         <Route path="/rookies" element={<Rookies />} />
         <Route path="/mock-draft" element={<MockDraft />} />
         <Route path="/data-doctor" element={<DataDoctor />} />
+        <Route path="/simulation-lab" element={<SimulationLab />} />
         <Route path="/baseball" element={<BaseballHome />} />
         <Route path="/baseball/prospects" element={<Prospects />} />
         <Route path="/baseball/players/:mlbId" element={<PlayerPage />} />

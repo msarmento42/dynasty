@@ -147,6 +147,15 @@ CREATE TABLE IF NOT EXISTS sync_log (
     ran_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS recommendation_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    league_id TEXT,
+    sport TEXT NOT NULL,
+    generated_at TEXT NOT NULL,
+    recommendation_count INTEGER NOT NULL,
+    payload_json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS league_settings (
     league_id TEXT PRIMARY KEY,
     league_name TEXT,
@@ -232,4 +241,17 @@ CREATE TABLE IF NOT EXISTS draft_picks (
     faab_spent INTEGER,
     picked_at TEXT,
     UNIQUE(session_id, overall_pick)
+);
+
+CREATE TABLE IF NOT EXISTS simulation_scenarios (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scenario_id TEXT UNIQUE NOT NULL,
+    league_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    actions_json TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    linked_decision_id INTEGER,
+    linked_trade_idea_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
