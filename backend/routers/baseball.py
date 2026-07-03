@@ -309,7 +309,10 @@ async def weekly_assistant(roster_name: str = "My Baseball Roster"):
         },
         "faab_targets": {
             "available": False,
-            "reason": "baseball_rosters only tracks the user's own roster, not a full league sync, so free agents can't be distinguished from owned players yet",
+            "reason": (
+                "baseball_rosters only tracks the user's own roster, not a full league sync, "
+                "so free agents can't be distinguished from owned players yet"
+            ),
         },
     }
 
@@ -333,7 +336,11 @@ async def refresh_injury_status(roster_name: str = "My Baseball Roster"):
                 status = await get_current_status(mlb_id)
                 return mlb_id, status
             except Exception as e:
-                return mlb_id, {"status_code": None, "status_description": f"lookup failed: {e}", "is_active_roster": None}
+                return mlb_id, {
+                    "status_code": None,
+                    "status_description": f"lookup failed: {e}",
+                    "is_active_roster": None,
+                }
 
         results = await asyncio.gather(*(fetch_one(mid) for mid in mlb_ids))
 
