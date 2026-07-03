@@ -14,7 +14,9 @@ Pages live: Roster Viewer, Trade Builder, Proposals, Playoffs (Monte Carlo), Pla
 
 DB tables with data: `players`, `leagues`, `rosters`, `picks`, `alerts`, `player_snapshots`, `trade_history`, `market_calibration`, `manager_profiles`, `sync_log`, `league_settings`. `news_items` is populated but has no serving endpoint.
 
-**Already in AGIOS queue (agios:ready-for-codex):** #44 (value history), #45 (CSV export), #57 (trade calc), #58 (multi-source rankings), #59 (roster news), #63 (player comparison).
+**Already in AGIOS queue (agios:ready-for-codex):** #44 (value history), #45 (CSV export), #57 (trade calc), #58 (multi-source rankings), #59 (roster news), #63 (player comparison). *(Stale as of 2026-07-02 — #44/#45/#90/#91/#92 are already closed `agios:implemented`; none of #57/58/59/63 currently carry `agios:ready-for-codex`. See `DECISION-ENGINE-PLAN.md`.)*
+
+**Build order 2026-07-02 onward:** see [`DECISION-ENGINE-PLAN.md`](./DECISION-ENGINE-PLAN.md) — Sprint F2/F3 below are superseded until that plan's Phase 2 has run for real weeks. Sprint B1-B3 and infra items are unaffected but deprioritized behind the same plan's Phase 0.
 
 ---
 
