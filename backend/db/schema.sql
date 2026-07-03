@@ -93,6 +93,17 @@ CREATE TABLE IF NOT EXISTS roster_snapshots (
     synced_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS league_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    league_id TEXT,
+    taken_at TEXT,
+    roster_count INTEGER,
+    expected_roster_count INTEGER,
+    waiver_pool_count INTEGER,
+    rostered_player_ids_json TEXT,
+    source_sync_id INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS trade_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     league_id TEXT,
