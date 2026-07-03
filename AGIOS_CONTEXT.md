@@ -53,6 +53,8 @@ When generating new issues for this repo, focus on:
 - Issues that require paid APIs or non-free data
 - Issues touching .env files, secrets, or production credentials
 
+**Decision-engine-first pause (added 2026-07-02, see `DECISION-ENGINE-PLAN.md`):** Do not generate new football analytics/trade-tool/draft-tool expansion issues, baseball issues (Sprint B1-B3), or UI-polish-for-its-own-sake issues until Phase 2 of the decision engine plan (waiver assistant, start/sit, trade analyzer, trade finder — all gated on Phase 0's data-trust layer and logged via Phase 1) has run for real weeks. This does not mean close or ignore the existing backlog — it means stop adding to it. Data-trust-layer issues (player identity mapping, snapshot freshness, validation gating, recommendation logging) are in scope and should be prioritized above everything else in this file.
+
 ---
 
 ## Allowed Paths (for AGIOS builder)
@@ -102,7 +104,7 @@ The backlog currently includes 33+ football feature issues (#113-#145) covering:
 - News/Intel: digest, sentiment analysis, value alerts, league activity feed, weekly recap
 - UX: global search, saved filter presets, comparison bookmarks, CSV export, settings page
 
-When generating new issues, prefer baseball features (underrepresented in the backlog) or deeper football analytics not yet covered.
+**Superseded 2026-07-02:** do not act on this preference (baseball / deeper analytics) until the decision-engine-first pause above is lifted. See `DECISION-ENGINE-PLAN.md`.
 
 ## Marcus OS boundary
 
