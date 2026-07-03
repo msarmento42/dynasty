@@ -17,7 +17,7 @@ The brief this plan was written from assumed a small, mostly-open backlog. The a
 6. **The local checkout at `~/Desktop/Claude/dynasty` is 129 commits behind `origin/main` and has an unrelated half-staged merge sitting in it** (old baseball router files staged as new, `backend/main.py` etc. modified, dozens of untracked pages). I read and wrote against `origin/main` via the GitHub API throughout, not the local working tree — the local tree needs `git status` reviewed and probably reset before anyone works in it directly again.
 7. **Baseball tables already exist in schema.sql** (`baseball_players`, `baseball_stats`, `baseball_rosters`) even though Sprint B1-B3 is explicitly deferred below — schema presence, not active use; no action taken.
 
-## Phase 0 — Data trust layer *(issues filed this session — see bottom)*
+## Phase 0 — Data trust layer *(filed: #268 player identity mapping, #269 snapshot table, #270 validation gate, #271 sync entrypoint doc)*
 
 Prerequisite for everything downstream to be trustworthy, not just useful.
 
