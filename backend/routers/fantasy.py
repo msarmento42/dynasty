@@ -30,6 +30,7 @@ from backend.services.fantasy_engine import (  # noqa: E402
 )
 from backend.services.recommendations import generate_football_recommendations  # noqa: E402
 from backend.services.proposals import generate_proposals  # noqa: E402
+from backend.services import data_trust  # noqa: E402
 from backend.services import sleeper as sleeper_svc  # noqa: E402
 
 router = APIRouter()
@@ -543,6 +544,7 @@ async def evaluate_trade(req: TradeRequest):
     current_year = datetime.now(timezone.utc).year
 
     async with aiosqlite.connect(DB_PATH) as db:
+        trust = await data_trust.get_trust_status(db, league_id)
         side_a_players = await get_players_for_ids(db, req.side_a.player_ids, league_id)
         side_b_players = await get_players_for_ids(db, req.side_b.player_ids, league_id)
 
@@ -575,7 +577,7 @@ async def evaluate_trade(req: TradeRequest):
     else:
         verdict = "FAIR"
 
-    return {
+    result = {
         "side_a_value": side_a_value,
         "side_b_value": side_b_value,
         "delta": delta,
@@ -588,6 +590,10 @@ async def evaluate_trade(req: TradeRequest):
         "positional_impact": trade_positional_impact(side_a_players, side_b_players),
         "data_confidence": aggregate_confidence([*side_a_players, *side_b_players]),
     }
+    if not trust["ok"]:
+        result["degraded"] = True
+        result["degraded_reasons"] = trust["reasons"]
+    return result
 
 
 async def build_simulation_baseline(db: aiosqlite.Connection, league_id: str) -> dict:
@@ -826,7 +832,16 @@ async def get_proposals(league_id: str):
     """Auto-generated ranked trade proposals for this league."""
     if league_id not in LEAGUE_CONFIG:
         raise HTTPException(status_code=404, detail=f"League {league_id} not found.")
-    return await generate_proposals(league_id)
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        trust = await data_trust.get_trust_status(db, league_id)
+
+    proposals = await generate_proposals(league_id)
+    if not trust["ok"]:
+        # Proposals normally return a bare list; only wrap it when degraded so
+        # the existing successful-path shape is unchanged for current consumers.
+        return {"proposals": proposals, "degraded": True, "degraded_reasons": trust["reasons"]}
+    return proposals
 
 
 @router.get("/alerts/{league_id}")
@@ -1672,6 +1687,7 @@ def _depth_mult(depth):
 async def get_startsit(league_id: str):
     """Return start/sit recommendations for Marcus's roster in the given league."""
     async with aiosqlite.connect(DB_PATH) as db:
+        trust = await data_trust.get_trust_status(db, league_id)
         league = await get_league_row(db, league_id)
         my_roster_id = league["config"].get("my_roster_id", league["my_roster_id"])
 
@@ -1803,11 +1819,15 @@ async def get_startsit(league_id: str):
             for p in pos_starters
         ]
 
-    return {
+    result = {
         "league_id": league_id,
         "recommendations": recommendations,
         "optimal_lineup": serialized_lineup,
     }
+    if not trust["ok"]:
+        result["degraded"] = True
+        result["degraded_reasons"] = trust["reasons"]
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1818,6 +1838,7 @@ async def get_startsit(league_id: str):
 async def get_waiver_wire(league_id: str):
     """Return top free agents not rostered in this league, sorted by dynasty value."""
     async with aiosqlite.connect(DB_PATH) as db:
+        trust = await data_trust.get_trust_status(db, league_id)
         await get_league_row(db, league_id)
 
         async with db.execute(
@@ -1866,11 +1887,15 @@ async def get_waiver_wire(league_id: str):
             "roster_pct": 0,
         })
 
-    return {
+    result = {
         "league_id": league_id,
         "free_agents": free_agents,
         "total": len(free_agents),
     }
+    if not trust["ok"]:
+        result["degraded"] = True
+        result["degraded_reasons"] = trust["reasons"]
+    return result
 
 
 # ---------------------------------------------------------------------------
