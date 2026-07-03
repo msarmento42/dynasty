@@ -54,6 +54,29 @@ class TradeRequest(BaseModel):
     side_b: TradeSide
 
 
+class SimulationAction(BaseModel):
+    action_type: str
+    label: str = ""
+    send_player_ids: List[str] = []
+    receive_player_ids: List[str] = []
+    drop_player_ids: List[str] = []
+    add_player_ids: List[str] = []
+    picks_added: List[PickRequest] = []
+    picks_removed: List[PickRequest] = []
+    lineup_player_ids: List[str] = []
+    baseball_add_values: List[int] = []
+    baseball_remove_values: List[int] = []
+
+
+class SimulationRequest(BaseModel):
+    league_id: str
+    name: str = "Untitled scenario"
+    actions: List[SimulationAction] = []
+    save: bool = False
+    linked_decision_id: Optional[int] = None
+    linked_trade_idea_id: Optional[str] = None
+
+
 async def get_league_row(db: aiosqlite.Connection, league_id: str) -> dict:
     async with db.execute(
         "SELECT league_id, name, n_teams, format, my_roster_id, config_json "
@@ -91,6 +114,62 @@ async def get_players_for_ids(
         }
         players.append(enrich_player(p, league_id))
     return players
+
+
+def player_value(player: dict) -> float:
+    return float(player.get("adjusted_value") or player.get("value_sf") or player.get("value_1qb") or 0)
+
+
+def pick_request_value(pick: PickRequest, n_teams: int) -> int:
+    current_year = datetime.now(timezone.utc).year
+    return pick_value(pick.round, pick.year - current_year, n_teams)
+
+
+def position_totals(players: list[dict]) -> dict:
+    totals = {"QB": 0, "RB": 0, "WR": 0, "TE": 0}
+    for player in players:
+        position = player.get("position") or "FLEX"
+        value = player_value(player)
+        if position in totals:
+            totals[position] += value
+        else:
+            totals["FLEX"] = totals.get("FLEX", 0) + value
+    return {position: round(value) for position, value in totals.items()}
+
+
+def roster_age(players: list[dict]) -> float:
+    ages = [float(p["age"]) for p in players if p.get("age")]
+    return round(sum(ages) / len(ages), 1) if ages else 0
+
+
+def playoff_odds_from_rank(rank: int, team_count: int) -> int:
+    if team_count <= 1:
+        return 100
+    percentile = 1 - ((rank - 1) / max(team_count - 1, 1))
+    return max(5, min(95, round(20 + percentile * 70)))
+
+
+def scenario_summary(
+    baseline_value: float,
+    scenario_value: float,
+    baseline_rank: int,
+    scenario_rank: int,
+    team_count: int,
+    action_count: int,
+) -> dict:
+    value_delta = round(scenario_value - baseline_value)
+    return {
+        "value_delta": value_delta,
+        "value_delta_pct": round((value_delta / baseline_value * 100) if baseline_value else 0, 1),
+        "rank_delta": baseline_rank - scenario_rank,
+        "playoff_odds_delta": (
+            playoff_odds_from_rank(scenario_rank, team_count)
+            - playoff_odds_from_rank(baseline_rank, team_count)
+        ),
+        "long_term_cost": max(0, -value_delta),
+        "win_now_impact": "positive" if value_delta > 500 else ("negative" if value_delta < -500 else "neutral"),
+        "action_count": action_count,
+    }
 
 
 def manager_payload(row: tuple, my_roster_id: int) -> dict:
@@ -509,6 +588,237 @@ async def evaluate_trade(req: TradeRequest):
         "positional_impact": trade_positional_impact(side_a_players, side_b_players),
         "data_confidence": aggregate_confidence([*side_a_players, *side_b_players]),
     }
+
+
+async def build_simulation_baseline(db: aiosqlite.Connection, league_id: str) -> dict:
+    league = await get_league_row(db, league_id)
+    my_roster_id = league["config"].get("my_roster_id", league["my_roster_id"])
+    n_teams = league["n_teams"] or LEAGUE_CONFIG.get(league_id, {}).get("n_teams", 12)
+
+    async with db.execute(
+        "SELECT roster_id, owner_display_name, player_ids_json FROM rosters WHERE league_id=? ORDER BY roster_id",
+        (league_id,),
+    ) as cur:
+        roster_rows = await cur.fetchall()
+
+    async with db.execute(
+        "SELECT current_owner_id, season, round FROM picks WHERE league_id=?",
+        (league_id,),
+    ) as cur:
+        pick_rows = await cur.fetchall()
+
+    teams = []
+    my_players: list[dict] = []
+    pick_assets: dict[int, list[dict]] = {}
+    for owner_id, season, round_number in pick_rows:
+        value = pick_request_value(PickRequest(year=season, round=round_number), n_teams)
+        pick_assets.setdefault(owner_id, []).append({"year": season, "round": round_number, "value": value})
+
+    for roster_id, owner, player_ids_json in roster_rows:
+        players = await get_players_for_ids(db, json.loads(player_ids_json or "[]"), league_id)
+        roster_value = sum(player_value(player) for player in players)
+        pick_value_total = sum(pick["value"] for pick in pick_assets.get(roster_id, []))
+        total_value = roster_value + pick_value_total
+        team = {
+            "roster_id": roster_id,
+            "owner": owner or f"Team {roster_id}",
+            "is_mine": roster_id == my_roster_id,
+            "roster_value": round(roster_value),
+            "pick_value": round(pick_value_total),
+            "total_value": round(total_value),
+            "position_totals": position_totals(players),
+            "average_age": roster_age(players),
+            "players": players,
+            "picks": pick_assets.get(roster_id, []),
+        }
+        teams.append(team)
+        if roster_id == my_roster_id:
+            my_players = players
+
+    teams.sort(key=lambda t: t["total_value"], reverse=True)
+    for index, team in enumerate(teams, 1):
+        team["rank"] = index
+        team["playoff_odds"] = playoff_odds_from_rank(index, len(teams))
+
+    my_team = next((team for team in teams if team["is_mine"]), None)
+    if not my_team:
+        raise HTTPException(status_code=404, detail="Marcus roster not found. Run daily sync first.")
+
+    async with db.execute(
+        """
+        SELECT mlb_id, name, position, team, level, dynasty_value
+        FROM baseball_players
+        WHERE mlb_id IN (SELECT mlb_id FROM baseball_rosters)
+        ORDER BY dynasty_value DESC, name
+        """
+    ) as cur:
+        baseball_rows = await cur.fetchall()
+
+    baseball_players = [
+        {
+            "mlb_id": row[0],
+            "name": row[1],
+            "position": row[2],
+            "team": row[3],
+            "level": row[4],
+            "value": row[5] or 0,
+        }
+        for row in baseball_rows
+    ]
+
+    return {
+        "league_id": league_id,
+        "league_name": league["name"],
+        "my_roster_id": my_roster_id,
+        "my_team": my_team,
+        "teams": teams,
+        "available_players": sorted(my_players, key=player_value, reverse=True),
+        "baseball_players": baseball_players,
+    }
+
+
+async def evaluate_simulation(db: aiosqlite.Connection, req: SimulationRequest) -> dict:
+    baseline = await build_simulation_baseline(db, req.league_id)
+    n_teams = len(baseline["teams"]) or 12
+    scenario_players = {player["sleeper_id"]: dict(player) for player in baseline["my_team"]["players"]}
+    action_results = []
+    scenario_value = float(baseline["my_team"]["total_value"])
+    pick_delta = 0
+    baseball_delta = 0
+
+    for action in req.actions:
+        sent_players = await get_players_for_ids(db, action.send_player_ids + action.drop_player_ids, req.league_id)
+        received_players = await get_players_for_ids(
+            db,
+            action.receive_player_ids + action.add_player_ids + action.lineup_player_ids,
+            req.league_id,
+        )
+        sent_value = sum(player_value(player) for player in sent_players)
+        received_value = sum(player_value(player) for player in received_players)
+        added_pick_value = sum(pick_request_value(pick, n_teams) for pick in action.picks_added)
+        removed_pick_value = sum(pick_request_value(pick, n_teams) for pick in action.picks_removed)
+        action_baseball_delta = sum(action.baseball_add_values) - sum(action.baseball_remove_values)
+        action_delta = received_value - sent_value + added_pick_value - removed_pick_value + action_baseball_delta
+
+        for player in sent_players:
+            scenario_players.pop(player["sleeper_id"], None)
+        for player in received_players:
+            scenario_players[player["sleeper_id"]] = player
+
+        pick_delta += added_pick_value - removed_pick_value
+        baseball_delta += action_baseball_delta
+        action_results.append({
+            "action_type": action.action_type,
+            "label": action.label or action.action_type.replace("_", " ").title(),
+            "delta": round(action_delta),
+            "sent_value": round(sent_value),
+            "received_value": round(received_value),
+            "pick_delta": round(added_pick_value - removed_pick_value),
+            "baseball_delta": round(action_baseball_delta),
+        })
+
+    scenario_roster_value = sum(player_value(player) for player in scenario_players.values())
+    scenario_value = scenario_roster_value + baseline["my_team"]["pick_value"] + pick_delta + baseball_delta
+    comparison_teams = [
+        {
+            "roster_id": team["roster_id"],
+            "owner": team["owner"],
+            "total_value": scenario_value if team["is_mine"] else team["total_value"],
+            "is_mine": team["is_mine"],
+        }
+        for team in baseline["teams"]
+    ]
+    comparison_teams.sort(key=lambda t: t["total_value"], reverse=True)
+    scenario_rank = next(i for i, team in enumerate(comparison_teams, 1) if team["is_mine"])
+    baseline_rank = baseline["my_team"]["rank"]
+    scenario_snapshot = {
+        "total_value": round(scenario_value),
+        "roster_value": round(scenario_roster_value),
+        "pick_value": round(baseline["my_team"]["pick_value"] + pick_delta),
+        "baseball_value_delta": round(baseball_delta),
+        "rank": scenario_rank,
+        "playoff_odds": playoff_odds_from_rank(scenario_rank, len(comparison_teams)),
+        "position_totals": position_totals(list(scenario_players.values())),
+        "average_age": roster_age(list(scenario_players.values())),
+    }
+
+    return {
+        "name": req.name,
+        "baseline": baseline["my_team"],
+        "scenario": scenario_snapshot,
+        "actions": action_results,
+        "summary": scenario_summary(
+            baseline["my_team"]["total_value"],
+            scenario_value,
+            baseline_rank,
+            scenario_rank,
+            len(comparison_teams),
+            len(req.actions),
+        ),
+    }
+
+
+@router.get("/league/{league_id}/simulation-lab")
+async def get_simulation_lab(league_id: str):
+    """Return baseline rosters, saved scenarios, and selectable players for what-if analysis."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        baseline = await build_simulation_baseline(db, league_id)
+        async with db.execute(
+            """
+            SELECT scenario_id, name, result_json, actions_json, created_at, updated_at
+            FROM simulation_scenarios
+            WHERE league_id=?
+            ORDER BY updated_at DESC
+            LIMIT 20
+            """,
+            (league_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+    saved = [
+        {
+            "scenario_id": row[0],
+            "name": row[1],
+            "result": json.loads(row[2] or "{}"),
+            "actions": json.loads(row[3] or "[]"),
+            "created_at": row[4],
+            "updated_at": row[5],
+        }
+        for row in rows
+    ]
+    return {**baseline, "saved_scenarios": saved}
+
+
+@router.post("/simulation-lab/scenarios")
+async def create_simulation_scenario(req: SimulationRequest):
+    """Evaluate a what-if scenario and optionally persist it without mutating real roster tables."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        result = await evaluate_simulation(db, req)
+        if req.save:
+            now = datetime.now(timezone.utc).isoformat()
+            scenario_id = str(uuid.uuid4())
+            await db.execute(
+                """
+                INSERT INTO simulation_scenarios
+                    (scenario_id, league_id, name, actions_json, result_json,
+                     linked_decision_id, linked_trade_idea_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    scenario_id,
+                    req.league_id,
+                    req.name,
+                    json.dumps([action.model_dump() for action in req.actions]),
+                    json.dumps(result),
+                    req.linked_decision_id,
+                    req.linked_trade_idea_id,
+                    now,
+                    now,
+                ),
+            )
+            await db.commit()
+            result["scenario_id"] = scenario_id
+    return result
 
 
 @router.get("/proposals/{league_id}")

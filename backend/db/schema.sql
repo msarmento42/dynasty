@@ -231,3 +231,16 @@ CREATE TABLE IF NOT EXISTS draft_picks (
     picked_at TEXT,
     UNIQUE(session_id, overall_pick)
 );
+
+CREATE TABLE IF NOT EXISTS simulation_scenarios (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scenario_id TEXT UNIQUE NOT NULL,
+    league_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    actions_json TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    linked_decision_id INTEGER,
+    linked_trade_idea_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
