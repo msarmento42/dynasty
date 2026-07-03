@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import ValueTrendChart from '../components/ValueTrendChart';
+import SourceIntelligencePanel from '../components/SourceIntelligencePanel.jsx';
 
 const POSITION_COLORS = {
   QB: '#dc2626',
@@ -379,6 +380,8 @@ export default function PlayerProfile() {
             {valueTrendError && (
               <p style={{ color: '#b42318', margin: '-8px 0 0' }}>{valueTrendError}</p>
             )}
+
+            <SourceIntelligencePanel intelligence={player.source_intelligence} />
 
             {/* Recent Stats */}
             {player.recent_stats && player.recent_stats.length > 0 && (

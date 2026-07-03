@@ -16,6 +16,7 @@ from backend.services.mlb_stats import (
 )
 import asyncio
 
+from backend.services.player_intelligence import baseball_intelligence
 from backend.services.recommendations import generate_baseball_recommendations
 
 router = APIRouter(prefix="/api/baseball", tags=["baseball"])
@@ -77,7 +78,9 @@ async def get_baseball_player(mlb_id: int):
         if not bio:
             raise HTTPException(status_code=404, detail=f"Player {mlb_id} not found")
         career = await get_player_career(mlb_id)
-        return {"player": bio, "career": career}
+        async with aiosqlite.connect(DB_PATH) as db:
+            source_intelligence = await baseball_intelligence(db, mlb_id)
+        return {"player": bio, "career": career, "source_intelligence": source_intelligence}
     except HTTPException:
         raise
     except Exception as exc:

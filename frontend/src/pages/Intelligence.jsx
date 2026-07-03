@@ -5,6 +5,7 @@ import QBPremiumCard from '../components/QBPremiumCard.jsx';
 import BreakoutCard from '../components/BreakoutCard.jsx';
 import StartSitCard from '../components/StartSitCard.jsx';
 import LoadingSkeleton from '../components/LoadingSkeleton.jsx';
+import SourceIntelligencePanel from '../components/SourceIntelligencePanel.jsx';
 
 const KTC_RANKINGS_URL = 'https://keeptradecut.com/api/rankings?format=superflex&numQBs=1';
 const FOUR_HORSEMEN_LEAGUE_IDS = new Set(['1315139749693886464', '1312285408079380481']);
@@ -616,6 +617,7 @@ export default function Intelligence() {
   const [startSitRecommendations, setStartSitRecommendations] = useState({});
   const [waiverWirePlayers, setWaiverWirePlayers] = useState([]);
   const [allPlayers, setAllPlayers] = useState([]); // To store all players for waiver wire
+  const [sourceRankings, setSourceRankings] = useState([]);
 
   const loadIntelligence = useCallback(async (leagueId) => {
     setSelectedLeague(leagueId);
@@ -627,6 +629,7 @@ export default function Intelligence() {
     setStartSitRecommendations({}); // Reset
     setWaiverWirePlayers([]); // Reset
     setAllPlayers([]); // Reset
+    setSourceRankings([]);
 
     try {
       const [
@@ -636,6 +639,7 @@ export default function Intelligence() {
         breakoutResponse,
         allPlayersResponse, // New
         allRostersResponse, // New
+        sourceRankingsResponse,
       ] = await Promise.all([
         fetch(`/fantasy/alerts/${leagueId}`),
         fetch('/fantasy/news'),
@@ -643,6 +647,7 @@ export default function Intelligence() {
         fetch(`/fantasy/breakout-candidates?league_id=${leagueId}&limit=10`),
         fetch('/fantasy/players/all'), // New endpoint
         fetch(`/fantasy/league/${leagueId}/all-rosters`), // New endpoint
+        fetch('/fantasy/players/source-rankings?limit=12'),
       ]);
 
       if (!alertsResponse.ok) {
@@ -666,6 +671,7 @@ export default function Intelligence() {
         breakoutData,
         allPlayersData,
         allRostersData,
+        sourceRankingsData,
       ] = await Promise.all([
         alertsResponse.json(),
         optionalJson(newsResponse),
@@ -673,6 +679,7 @@ export default function Intelligence() {
         optionalJson(breakoutResponse),
         optionalJson(allPlayersResponse),
         optionalJson(allRostersResponse),
+        optionalJson(sourceRankingsResponse),
       ]);
       const players = Array.isArray(rosterData.players) ? rosterData.players : [];
       const fullPlayerList = Array.isArray(allPlayersData) ? allPlayersData : [];
@@ -684,6 +691,7 @@ export default function Intelligence() {
       setRosterPlayers(players);
       setBreakoutCandidates(breakoutData);
       setAllPlayers(fullPlayerList); // Store all players
+      setSourceRankings(Array.isArray(sourceRankingsData) ? sourceRankingsData : []);
 
       // Generate Start/Sit recommendations
       const startSit = generateStartSitRecommendations(players);
@@ -713,6 +721,7 @@ export default function Intelligence() {
       setStartSitRecommendations({});
       setWaiverWirePlayers([]);
       setAllPlayers([]);
+      setSourceRankings([]);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -738,6 +747,40 @@ export default function Intelligence() {
 
         {!error && selectedLeague && (
           <div style={{ display: 'grid', gap: 22 }}>
+            <section style={{ display: 'grid', gap: 12 }}>
+              <h2 style={{ margin: 0 }}>Source-Aware Rankings</h2>
+              {loading ? (
+                <SkeletonGrid count={3} cardProps={{ metrics: 2 }} />
+              ) : sourceRankings.length === 0 ? (
+                <p style={{ color: '#667085', margin: 0 }}>No source-aware rankings available.</p>
+              ) : (
+                <div style={{ display: 'grid', gap: 12 }}>
+                  {sourceRankings.slice(0, 5).map((player) => (
+                    <article
+                      key={player.player_id}
+                      style={{
+                        background: '#ffffff',
+                        border: '1px solid #d9dee7',
+                        borderRadius: 8,
+                        padding: 12,
+                      }}
+                    >
+                      <div style={{ alignItems: 'center', display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+                        <div>
+                          <strong>{player.name}</strong>
+                          <div style={{ color: '#667085', fontSize: 13 }}>
+                            {[player.position, player.team].filter(Boolean).join(' / ')}
+                          </div>
+                        </div>
+                        <strong>{Number(player.blended_score || 0).toLocaleString()}</strong>
+                      </div>
+                      <SourceIntelligencePanel intelligence={player.source_intelligence} compact />
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+
             <section style={{ display: 'grid', gap: 12 }}>
               <h2 style={{ margin: 0 }}>Alerts</h2>
               {loading ? <AlertsSkeleton /> : <AlertsSection alerts={alerts} />}

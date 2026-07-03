@@ -28,6 +28,10 @@ from backend.services.fantasy_engine import (  # noqa: E402
     player_value_trend,
     trade_positional_impact,
 )
+from backend.services.player_intelligence import (  # noqa: E402
+    football_intelligence,
+    football_source_rankings,
+)
 from backend.services.recommendations import generate_football_recommendations  # noqa: E402
 from backend.services.proposals import generate_proposals  # noqa: E402
 from backend.services import data_trust  # noqa: E402
@@ -1215,6 +1219,7 @@ async def get_player_profile(player_id: str, response: Response):
             }
             for cr in comp_rows
         ]
+        source_intelligence = await football_intelligence(db, player_id)
 
     # Breakout score from enriched data
     breakout_score = enriched.get("breakout_score", None)
@@ -1239,9 +1244,17 @@ async def get_player_profile(player_id: str, response: Response):
         "positional_rank": positional_rank,
         "breakout_score": breakout_score,
         "value_trend": value_trend,
+        "source_intelligence": source_intelligence,
         "recent_stats": recent_stats,
         "comparable_players": comparable_players,
     }
+
+
+@router.get("/players/source-rankings")
+async def get_player_source_rankings(limit: int = 40):
+    """Return football players ranked by blended source-aware score."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        return await football_source_rankings(db, max(1, min(limit, 100)))
 
 
 @router.get("/players/{player_id}/value-trend")

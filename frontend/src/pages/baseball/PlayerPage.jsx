@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { LevelBadge, PosBadge } from './BaseballHome.jsx';
+import SourceIntelligencePanel from '../../components/SourceIntelligencePanel.jsx';
 
 const API = import.meta.env.VITE_API_URL || '';
 
@@ -24,6 +25,7 @@ export default function PlayerPage() {
   const navigate = useNavigate();
   const [player, setPlayer] = useState(null);
   const [career, setCareer] = useState([]);
+  const [sourceIntelligence, setSourceIntelligence] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [addStatus, setAddStatus] = useState('');
@@ -39,6 +41,7 @@ export default function PlayerPage() {
         const data = await res.json();
         setPlayer(data.player);
         setCareer(data.career || []);
+        setSourceIntelligence(data.source_intelligence || null);
       } catch (err) {
         setError(err.message);
       } finally {
@@ -159,6 +162,10 @@ export default function PlayerPage() {
               )}
             </div>
           </div>
+        </div>
+
+        <div style={{ marginBottom: 20 }}>
+          <SourceIntelligencePanel intelligence={sourceIntelligence} />
         </div>
 
         {/* Level progression */}

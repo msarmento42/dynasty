@@ -167,6 +167,22 @@ CREATE TABLE IF NOT EXISTS recommendation_snapshots (
     payload_json TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS player_source_metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sport TEXT NOT NULL,
+    player_id TEXT NOT NULL,
+    player_name TEXT,
+    source TEXT NOT NULL,
+    metric_type TEXT NOT NULL,
+    scoring_format TEXT DEFAULT 'overall',
+    metric_value REAL,
+    metric_rank INTEGER,
+    confidence REAL DEFAULT 0.5,
+    observed_at TEXT,
+    payload_json TEXT,
+    UNIQUE(sport, player_id, source, metric_type, scoring_format)
+);
+
 CREATE TABLE IF NOT EXISTS league_settings (
     league_id TEXT PRIMARY KEY,
     league_name TEXT,
