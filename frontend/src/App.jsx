@@ -18,6 +18,7 @@ import BaseballHome from './pages/baseball/BaseballHome.jsx';
 import Prospects from './pages/baseball/Prospects.jsx';
 import PlayerPage from './pages/baseball/PlayerPage.jsx';
 import BaseballRoster from './pages/baseball/Roster.jsx';
+import BaseballDraft from './pages/baseball/BaseballDraft.jsx';
 import ValueHistory from './pages/ValueHistory.jsx';
 import Rookies from './pages/Rookies.jsx';
 import MockDraft from './pages/MockDraft.jsx';
@@ -410,6 +411,7 @@ export default function App() {
         <Link to="/data-doctor">Data Doctor</Link>
         <span style={{ color: 'var(--border-color)', margin: '0 4px' }}>|</span>
         <Link to="/baseball">⚾ Baseball</Link>
+        <Link to="/baseball/draft">⚾ Draft Board</Link>
         <GlobalSearch />
         <button
           className="dark-mode-toggle"
@@ -455,6 +457,7 @@ export default function App() {
         <Route path="/baseball/prospects" element={<Prospects />} />
         <Route path="/baseball/players/:mlbId" element={<PlayerPage />} />
         <Route path="/baseball/roster" element={<BaseballRoster />} />
+        <Route path="/baseball/draft" element={<BaseballDraft />} />
       </Routes>
     </BrowserRouter>
   );
