@@ -8,11 +8,13 @@ from fastapi import APIRouter, HTTPException, Query
 
 from backend.database import DB_PATH
 from backend.services.mlb_stats import (
+    get_current_status,
     get_player,
     get_player_career,
     get_prospects,
     search_players,
 )
+import asyncio
 
 router = APIRouter(prefix="/api/baseball", tags=["baseball"])
 
@@ -228,23 +230,17 @@ async def update_roster_notes(mlb_id: int, notes: str, roster_name: str = "My Ba
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Weekly roster assistant (#188)
 #
-# SCOPE NOTE: this endpoint only covers what the current schema can support
-# honestly. It does NOT include:
-#   - IL move suggestions: baseball_players has no injury_status column and
-#     there is no baseball injury/news feed table (unlike football, which has
-#     news_items + injury_status on players). Faking IL alerts wasn't an
-#     option, so this section is omitted rather than fabricated.
-#   - FAAB targets: baseball_rosters only tracks Marcus's OWN roster, not a
-#     synced view of the full league (unlike football's rosters table, which
-#     syncs every team via Sleeper). There's no way to tell "free agent" from
-#     "owned by someone else" for baseball right now, so FAAB targets can't be
-#     computed honestly either.
-# What IS implemented: start/sit ranking for pitchers on Marcus's own roster,
-# using dynasty_value as the ranking signal (real per-start matchup/ERA data
-# would need a stats source keyed by upcoming schedule, which baseball_stats
-# doesn't provide in a queryable form yet).
+# IL Monitor now uses real MLB Stats API data (injury_status column, kept
+# fresh via POST /roster/refresh-injury-status). Call that endpoint before
+# reading this one if injury_status_updated_at looks stale.
+#
+# FAAB targets are still NOT implemented: baseball_rosters only tracks
+# Marcus's OWN roster, not a synced view of the full league, so there's no
+# way to distinguish a free agent from a player owned by someone else. This
+# needs a real fantasy-platform integration before it can be built honestly.
 # ---------------------------------------------------------------------------
 
 @router.get("/weekly-assistant")
@@ -262,9 +258,33 @@ async def weekly_assistant(roster_name: str = "My Baseball Roster"):
             (roster_name,),
         )).fetchall()
 
+        il_rows = await (await db.execute(
+            """
+            SELECT r.mlb_id, p.name, p.position, p.team, p.injury_status, p.injury_status_updated_at
+            FROM baseball_rosters r
+            LEFT JOIN baseball_players p ON p.mlb_id = r.mlb_id
+            WHERE r.roster_name = ?
+              AND p.injury_status IS NOT NULL
+              AND p.injury_status NOT IN ('Active', 'Unknown')
+            ORDER BY p.injury_status_updated_at DESC
+            """,
+            (roster_name,),
+        )).fetchall()
+
+        staleness_row = await (await db.execute(
+            """
+            SELECT MIN(p.injury_status_updated_at) AS oldest
+            FROM baseball_rosters r
+            LEFT JOIN baseball_players p ON p.mlb_id = r.mlb_id
+            WHERE r.roster_name = ?
+            """,
+            (roster_name,),
+        )).fetchone()
+
     pitchers = [dict(r) for r in rows]
     start_candidates = pitchers[: max(1, len(pitchers) // 2)] if pitchers else []
     stream_watch = pitchers[max(1, len(pitchers) // 2):] if pitchers else []
+    il_players = [dict(r) for r in il_rows]
 
     return {
         "roster_name": roster_name,
@@ -274,11 +294,51 @@ async def weekly_assistant(roster_name: str = "My Baseball Roster"):
             "ranking_basis": "dynasty_value (no per-start matchup/ERA data source available yet)",
         },
         "il_monitor": {
-            "available": False,
-            "reason": "no injury_status column or news feed for baseball players in the current schema",
+            "available": True,
+            "players": il_players,
+            "data_freshness": staleness_row["oldest"] if staleness_row else None,
+            "note": "Call POST /api/baseball/roster/refresh-injury-status first if this looks stale.",
         },
         "faab_targets": {
             "available": False,
-            "reason": "baseball_rosters only tracks Marcus's own roster, not a full league sync, so free agents can't be distinguished from owned players yet",
+            "reason": "baseball_rosters only tracks the user's own roster, not a full league sync, so free agents can't be distinguished from owned players yet",
         },
+    }
+
+
+@router.post("/roster/refresh-injury-status")
+async def refresh_injury_status(roster_name: str = "My Baseball Roster"):
+    """Fetch current MLB roster status for every player on this roster and
+    persist it to baseball_players.injury_status. Real data from MLB Stats
+    API (rosterEntries hydrate) — not fabricated. Run this before checking
+    the weekly assistant's IL Monitor for fresh results.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await (await db.execute(
+            "SELECT mlb_id FROM baseball_rosters WHERE roster_name = ?", (roster_name,)
+        )).fetchall()
+        mlb_ids = [r["mlb_id"] for r in rows]
+
+        async def fetch_one(mlb_id):
+            try:
+                status = await get_current_status(mlb_id)
+                return mlb_id, status
+            except Exception as e:
+                return mlb_id, {"status_code": None, "status_description": f"lookup failed: {e}", "is_active_roster": None}
+
+        results = await asyncio.gather(*(fetch_one(mid) for mid in mlb_ids))
+
+        now = datetime.now(timezone.utc).isoformat()
+        for mlb_id, status in results:
+            await db.execute(
+                "UPDATE baseball_players SET injury_status = ?, injury_status_updated_at = ? WHERE mlb_id = ?",
+                (status["status_description"], now, mlb_id),
+            )
+        await db.commit()
+
+    return {
+        "roster_name": roster_name,
+        "players_checked": len(mlb_ids),
+        "statuses": {mlb_id: status["status_description"] for mlb_id, status in results},
     }

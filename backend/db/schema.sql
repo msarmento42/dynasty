@@ -165,6 +165,8 @@ CREATE TABLE IF NOT EXISTS baseball_players (
     service_years REAL,
     debut_year INTEGER,
     dynasty_value INTEGER DEFAULT 0,
+    injury_status TEXT,
+    injury_status_updated_at TEXT,
     updated_at TEXT
 );
 
