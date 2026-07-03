@@ -193,3 +193,30 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     value_mode TEXT NOT NULL DEFAULT 'dynasty' CHECK (value_mode IN ('dynasty', 'redraft')),
     updated_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS draft_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sport TEXT NOT NULL DEFAULT 'football',
+    num_teams INTEGER NOT NULL,
+    num_rounds INTEGER NOT NULL,
+    user_pick_slot INTEGER NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'snake',
+    faab_budget INTEGER,
+    current_pick INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS draft_picks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    overall_pick INTEGER NOT NULL,
+    round INTEGER NOT NULL,
+    pick_in_round INTEGER NOT NULL,
+    team_slot INTEGER NOT NULL,
+    player_id TEXT,
+    player_name TEXT,
+    position TEXT,
+    faab_spent INTEGER,
+    picked_at TEXT,
+    UNIQUE(session_id, overall_pick)
+);
