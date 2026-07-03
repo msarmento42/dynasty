@@ -12,6 +12,17 @@ CREATE TABLE IF NOT EXISTS players (
     updated_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS player_id_map (
+    sleeper_id TEXT PRIMARY KEY,
+    espn_id TEXT,
+    yahoo_id TEXT,
+    rotowire_id TEXT,
+    match_confidence REAL,
+    match_method TEXT,
+    manual_override INTEGER DEFAULT 0,
+    updated_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS leagues (
     league_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
