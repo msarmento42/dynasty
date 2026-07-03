@@ -225,3 +225,60 @@ async def update_roster_notes(mlb_id: int, notes: str, roster_name: str = "My Ba
             raise HTTPException(status_code=404, detail=f"Player {mlb_id} not on roster '{roster_name}'")
 
     return {"status": "updated", "mlb_id": mlb_id, "notes": notes}
+
+
+# ---------------------------------------------------------------------------
+# Weekly roster assistant (#188)
+#
+# SCOPE NOTE: this endpoint only covers what the current schema can support
+# honestly. It does NOT include:
+#   - IL move suggestions: baseball_players has no injury_status column and
+#     there is no baseball injury/news feed table (unlike football, which has
+#     news_items + injury_status on players). Faking IL alerts wasn't an
+#     option, so this section is omitted rather than fabricated.
+#   - FAAB targets: baseball_rosters only tracks Marcus's OWN roster, not a
+#     synced view of the full league (unlike football's rosters table, which
+#     syncs every team via Sleeper). There's no way to tell "free agent" from
+#     "owned by someone else" for baseball right now, so FAAB targets can't be
+#     computed honestly either.
+# What IS implemented: start/sit ranking for pitchers on Marcus's own roster,
+# using dynasty_value as the ranking signal (real per-start matchup/ERA data
+# would need a stats source keyed by upcoming schedule, which baseball_stats
+# doesn't provide in a queryable form yet).
+# ---------------------------------------------------------------------------
+
+@router.get("/weekly-assistant")
+async def weekly_assistant(roster_name: str = "My Baseball Roster"):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await (await db.execute(
+            """
+            SELECT r.mlb_id, p.name, p.position, p.team, p.dynasty_value
+            FROM baseball_rosters r
+            LEFT JOIN baseball_players p ON p.mlb_id = r.mlb_id
+            WHERE r.roster_name = ? AND p.position IN ('SP', 'RP')
+            ORDER BY p.dynasty_value DESC
+            """,
+            (roster_name,),
+        )).fetchall()
+
+    pitchers = [dict(r) for r in rows]
+    start_candidates = pitchers[: max(1, len(pitchers) // 2)] if pitchers else []
+    stream_watch = pitchers[max(1, len(pitchers) // 2):] if pitchers else []
+
+    return {
+        "roster_name": roster_name,
+        "start_sit": {
+            "start": start_candidates,
+            "bench_or_stream": stream_watch,
+            "ranking_basis": "dynasty_value (no per-start matchup/ERA data source available yet)",
+        },
+        "il_monitor": {
+            "available": False,
+            "reason": "no injury_status column or news feed for baseball players in the current schema",
+        },
+        "faab_targets": {
+            "available": False,
+            "reason": "baseball_rosters only tracks Marcus's own roster, not a full league sync, so free agents can't be distinguished from owned players yet",
+        },
+    }
