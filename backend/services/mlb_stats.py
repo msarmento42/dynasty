@@ -158,3 +158,30 @@ async def get_prospects(limit: int = 200) -> list[dict]:
         key=lambda p: (-LEVEL_RANK.get(p["level"], 0), p["name"])
     )
     return all_players[:limit]
+
+
+async def get_current_status(mlb_id: int) -> dict:
+    """Get a player's current roster status (Active, 10-Day-IL, 60-Day-IL, etc.).
+
+    Uses the rosterEntries hydrate — the first entry with isActive=true is the
+    player's current status. Falls back to 'Unknown' if no active entry is found
+    (can happen for retired/inactive players).
+    """
+    url = f"{MLB_API}/people/{mlb_id}"
+    data = await _get_json(url, params={"hydrate": "rosterEntries"})
+    people = data.get("people", [])
+    if not people:
+        return {"status_code": None, "status_description": "Unknown", "is_active_roster": False}
+
+    entries = people[0].get("rosterEntries", [])
+    current = next((e for e in entries if e.get("isActive")), None)
+    if current is None:
+        return {"status_code": None, "status_description": "Unknown", "is_active_roster": False}
+
+    status = current.get("status", {})
+    code = status.get("code")
+    return {
+        "status_code": code,
+        "status_description": status.get("description", "Unknown"),
+        "is_active_roster": code == "A",
+    }
