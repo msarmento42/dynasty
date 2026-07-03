@@ -16,6 +16,8 @@ from backend.services.mlb_stats import (
 )
 import asyncio
 
+from backend.services.recommendations import generate_baseball_recommendations
+
 router = APIRouter(prefix="/api/baseball", tags=["baseball"])
 
 
@@ -43,6 +45,12 @@ def baseball_confidence(row) -> dict:
         "updated_at": row["updated_at"],
         "warnings": warnings,
     }
+
+
+@router.get("/recommendations")
+async def get_baseball_recommendations(limit: int = Query(8, ge=1, le=24)):
+    """Return unified baseball recommendations for dashboard cards."""
+    return await generate_baseball_recommendations(limit=limit)
 
 
 # ---------------------------------------------------------------------------
@@ -301,7 +309,10 @@ async def weekly_assistant(roster_name: str = "My Baseball Roster"):
         },
         "faab_targets": {
             "available": False,
-            "reason": "baseball_rosters only tracks the user's own roster, not a full league sync, so free agents can't be distinguished from owned players yet",
+            "reason": (
+                "baseball_rosters only tracks the user's own roster, not a full league sync, "
+                "so free agents can't be distinguished from owned players yet"
+            ),
         },
     }
 
@@ -325,7 +336,11 @@ async def refresh_injury_status(roster_name: str = "My Baseball Roster"):
                 status = await get_current_status(mlb_id)
                 return mlb_id, status
             except Exception as e:
-                return mlb_id, {"status_code": None, "status_description": f"lookup failed: {e}", "is_active_roster": None}
+                return mlb_id, {
+                    "status_code": None,
+                    "status_description": f"lookup failed: {e}",
+                    "is_active_roster": None,
+                }
 
         results = await asyncio.gather(*(fetch_one(mid) for mid in mlb_ids))
 

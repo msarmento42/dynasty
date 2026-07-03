@@ -55,14 +55,6 @@ async def get_my_grade(db: aiosqlite.Connection, league_id: str, my_roster_id: i
     ) as cur:
         roster_rows = await cur.fetchall()
 
-    async with db.execute(
-        "SELECT current_owner_id, COUNT(*) FROM picks WHERE league_id=? GROUP BY current_owner_id",
-        (league_id,),
-    ) as cur:
-        pick_rows = await cur.fetchall()
-    pick_counts = {row[0]: row[1] for row in pick_rows}
-    max_picks = max(pick_counts.values(), default=1) or 1
-
     all_pos_values = []
     my_pos_values = None
     for roster_id, owner, pid_json in roster_rows:
