@@ -23,6 +23,7 @@ import ValueHistory from './pages/ValueHistory.jsx';
 import Rookies from './pages/Rookies.jsx';
 import MockDraft from './pages/MockDraft.jsx';
 import DataDoctor from './pages/DataDoctor.jsx';
+import SyncCenter from './pages/SyncCenter.jsx';
 
 const POS_COLORS = {
   QB: { bg: '#e0f2fe', text: '#0369a1' },
@@ -408,6 +409,7 @@ export default function App() {
         <Link to="/value-history">Value History</Link>
         <Link to="/rookies">Rookies</Link>
         <Link to="/mock-draft">Mock Draft</Link>
+        <Link to="/sync-center">Sync Center</Link>
         <Link to="/data-doctor">Data Doctor</Link>
         <span style={{ color: 'var(--border-color)', margin: '0 4px' }}>|</span>
         <Link to="/baseball">⚾ Baseball</Link>
@@ -452,6 +454,7 @@ export default function App() {
         <Route path="/value-history" element={<ValueHistory />} />
         <Route path="/rookies" element={<Rookies />} />
         <Route path="/mock-draft" element={<MockDraft />} />
+        <Route path="/sync-center" element={<SyncCenter />} />
         <Route path="/data-doctor" element={<DataDoctor />} />
         <Route path="/baseball" element={<BaseballHome />} />
         <Route path="/baseball/prospects" element={<Prospects />} />

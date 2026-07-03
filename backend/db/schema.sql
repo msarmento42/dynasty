@@ -136,6 +136,17 @@ CREATE TABLE IF NOT EXISTS sync_log (
     ran_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS import_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sport TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    source_name TEXT,
+    status TEXT NOT NULL,
+    rows_imported INTEGER DEFAULT 0,
+    message TEXT,
+    imported_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS league_settings (
     league_id TEXT PRIMARY KEY,
     league_name TEXT,

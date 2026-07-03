@@ -1,6 +1,8 @@
 """Fantasy API endpoints - leagues, rosters, trade evaluation, picks."""
 
 import asyncio
+import csv
+import io
 import json
 import random
 import sys
@@ -12,7 +14,7 @@ from typing import List, Optional
 import aiosqlite
 from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -36,6 +38,53 @@ PLAYER_VALUE_CACHE_CONTROL = "public, max-age=3600"
 PLAYER_VALUE_REFRESH_COOLDOWN_SECONDS = 60
 LAST_PLAYER_VALUE_REFRESH_AT = None
 
+FOOTBALL_IMPORT_TEMPLATE = (
+    "player_id,name,position,team,roster_id,owner_display_name,value_sf,value_1qb\n"
+    "manual-001,Example Wideout,WR,KC,1,My Team,4200,3900\n"
+)
+BASEBALL_IMPORT_TEMPLATE = (
+    "mlb_id,name,position,team,level,dynasty_value,notes,roster_name\n"
+    "660271,Example Prospect,SS,BAL,AAA,45,Taxi squad target,My Baseball Roster\n"
+)
+SUPPORTED_IMPORTS = {
+    "football": {
+        "platforms": ["yahoo", "espn", "cbs"],
+        "required_columns": ["player_id", "name"],
+        "template": FOOTBALL_IMPORT_TEMPLATE,
+    },
+    "baseball": {
+        "platforms": ["yahoo", "espn", "cbs", "manual"],
+        "required_columns": ["mlb_id", "name"],
+        "template": BASEBALL_IMPORT_TEMPLATE,
+    },
+}
+PLATFORM_STATUS = [
+    {
+        "platform": "Sleeper",
+        "sport": "football",
+        "status": "supported",
+        "message": "Sleeper remains the first-class API sync path. Use Refresh Sleeper for this source.",
+    },
+    {
+        "platform": "Yahoo",
+        "sport": "football/baseball",
+        "status": "csv-only",
+        "message": "Direct API auth is not configured; import roster CSVs from the Sync Center.",
+    },
+    {
+        "platform": "ESPN",
+        "sport": "football/baseball",
+        "status": "csv-only",
+        "message": "Private league API access is not available; use the CSV template.",
+    },
+    {
+        "platform": "CBS",
+        "sport": "football/baseball",
+        "status": "csv-only",
+        "message": "Direct integration is not available; use manual CSV import.",
+    },
+]
+
 
 class PickRequest(BaseModel):
     round: int
@@ -51,6 +100,15 @@ class TradeRequest(BaseModel):
     league_id: str
     side_a: TradeSide
     side_b: TradeSide
+
+
+class CsvImportRequest(BaseModel):
+    sport: str = Field(..., pattern="^(football|baseball)$")
+    platform: str
+    csv_text: str
+    source_name: str = ""
+    league_id: str = ""
+    roster_name: str = "My Baseball Roster"
 
 
 async def get_league_row(db: aiosqlite.Connection, league_id: str) -> dict:
@@ -177,6 +235,200 @@ async def latest_value(db: aiosqlite.Connection, table_name: str, column_name: s
     return row[0] if row else None
 
 
+async def recent_imports(db: aiosqlite.Connection) -> list:
+    async with db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='import_history'") as cur:
+        exists = await cur.fetchone()
+    if not exists:
+        return []
+    async with db.execute(
+        """
+        SELECT sport, platform, source_name, status, rows_imported, message, imported_at
+        FROM import_history
+        ORDER BY imported_at DESC, id DESC
+        LIMIT 12
+        """
+    ) as cur:
+        rows = await cur.fetchall()
+    return [
+        {
+            "sport": row[0],
+            "platform": row[1],
+            "source_name": row[2],
+            "status": row[3],
+            "rows_imported": row[4],
+            "message": row[5],
+            "imported_at": row[6],
+        }
+        for row in rows
+    ]
+
+
+async def record_import(
+    db: aiosqlite.Connection,
+    req: CsvImportRequest,
+    status: str,
+    rows_imported: int,
+    message: str,
+) -> None:
+    await db.execute(
+        """
+        INSERT INTO import_history
+            (sport, platform, source_name, status, rows_imported, message, imported_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            req.sport,
+            req.platform.lower(),
+            req.source_name or req.league_id or req.roster_name,
+            status,
+            rows_imported,
+            message[:500],
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+
+
+def parse_import_csv(req: CsvImportRequest) -> list[dict]:
+    text = req.csv_text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="CSV text is required.")
+
+    reader = csv.DictReader(io.StringIO(text))
+    rows = [
+        {str(key or "").strip(): str(value or "").strip() for key, value in row.items()}
+        for row in reader
+    ]
+    required = SUPPORTED_IMPORTS[req.sport]["required_columns"]
+    missing = [column for column in required if column not in (reader.fieldnames or [])]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing required columns: {', '.join(missing)}")
+    if not rows:
+        raise HTTPException(status_code=400, detail="CSV has headers but no roster rows.")
+    return rows
+
+
+async def import_football_csv(db: aiosqlite.Connection, req: CsvImportRequest, rows: list[dict]) -> tuple[int, str]:
+    league_id = req.league_id.strip() or f"manual-{req.platform.lower()}"
+    league_name = req.source_name.strip() or f"{req.platform.title()} Manual Import"
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        roster_id = int(rows[0].get("roster_id") or 1)
+    except ValueError:
+        roster_id = 1
+    owner = rows[0].get("owner_display_name") or "Imported Roster"
+    player_ids = []
+
+    await db.execute(
+        """
+        INSERT INTO leagues (league_id, name, n_teams, format, my_roster_id, config_json)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(league_id) DO UPDATE SET
+            name=excluded.name,
+            format=excluded.format,
+            my_roster_id=excluded.my_roster_id,
+            config_json=excluded.config_json
+        """,
+        (
+            league_id,
+            league_name,
+            1,
+            "manual_csv",
+            roster_id,
+            json.dumps({"source": req.platform.lower(), "my_roster_id": roster_id}),
+        ),
+    )
+
+    for row in rows:
+        player_id = row.get("player_id")
+        if not player_id:
+            continue
+        player_ids.append(player_id)
+        await db.execute(
+            """
+            INSERT INTO players
+                (sleeper_id, name, position, team, value_sf, value_1qb, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(sleeper_id) DO UPDATE SET
+                name=excluded.name,
+                position=excluded.position,
+                team=excluded.team,
+                value_sf=excluded.value_sf,
+                value_1qb=excluded.value_1qb,
+                updated_at=excluded.updated_at
+            """,
+            (
+                player_id,
+                row.get("name") or player_id,
+                row.get("position"),
+                row.get("team"),
+                int(row.get("value_sf") or 0),
+                int(row.get("value_1qb") or 0),
+                now,
+            ),
+        )
+
+    await db.execute("DELETE FROM rosters WHERE league_id = ? AND roster_id = ?", (league_id, roster_id))
+    await db.execute(
+        """
+        INSERT INTO rosters (league_id, roster_id, owner_display_name, player_ids_json, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (league_id, roster_id, owner, json.dumps(player_ids), now),
+    )
+    return len(player_ids), f"Imported {len(player_ids)} football players into {league_name}."
+
+
+async def import_baseball_csv(db: aiosqlite.Connection, req: CsvImportRequest, rows: list[dict]) -> tuple[int, str]:
+    now = datetime.now(timezone.utc).isoformat()
+    default_roster = req.roster_name.strip() or "My Baseball Roster"
+    imported = 0
+
+    for row in rows:
+        try:
+            mlb_id = int(row.get("mlb_id") or 0)
+        except ValueError:
+            mlb_id = 0
+        if not mlb_id:
+            continue
+
+        imported += 1
+        roster_name = row.get("roster_name") or default_roster
+        await db.execute(
+            """
+            INSERT INTO baseball_players
+                (mlb_id, name, position, team, level, dynasty_value, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(mlb_id) DO UPDATE SET
+                name=excluded.name,
+                position=excluded.position,
+                team=excluded.team,
+                level=excluded.level,
+                dynasty_value=excluded.dynasty_value,
+                updated_at=excluded.updated_at
+            """,
+            (
+                mlb_id,
+                row.get("name") or str(mlb_id),
+                row.get("position"),
+                row.get("team"),
+                row.get("level") or "MLB",
+                int(row.get("dynasty_value") or 0),
+                now,
+            ),
+        )
+        await db.execute(
+            """
+            INSERT INTO baseball_rosters (roster_name, mlb_id, acquired_date, notes)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(roster_name, mlb_id) DO UPDATE SET
+                notes=excluded.notes
+            """,
+            (roster_name, mlb_id, now[:10], row.get("notes", "")),
+        )
+
+    return imported, f"Imported {imported} baseball players into {default_roster}."
+
+
 def issue_status(status: str) -> str:
     if status == "fresh":
         return "ok"
@@ -296,6 +548,141 @@ async def get_data_doctor():
         "freshness": freshness,
         "checks": checks,
     }
+
+
+@router.get("/sync-status")
+async def get_sync_status():
+    """Return local sync counts for the frontend sync widgets."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        counts = {
+            "players": await table_count(db, "players"),
+            "leagues": await table_count(db, "leagues"),
+            "rosters": await table_count(db, "rosters"),
+            "picks": await table_count(db, "picks"),
+            "trade_history": await table_count(db, "trade_history"),
+            "baseball_players": await table_count(db, "baseball_players"),
+            "baseball_rosters": await table_count(db, "baseball_rosters"),
+            "import_history": await table_count(db, "import_history"),
+        }
+        async with db.execute(
+            """
+            SELECT sync_type, status, message, ran_at
+            FROM sync_log
+            ORDER BY ran_at DESC, id DESC
+            LIMIT 1
+            """
+        ) as cur:
+            row = await cur.fetchone()
+
+    last_sync = None
+    if row:
+        last_sync = {"sync_type": row[0], "status": row[1], "message": row[2], "ran_at": row[3]}
+
+    core_data_loaded = counts["players"] > 0 and counts["leagues"] > 0 and counts["rosters"] > 0
+    return {
+        "database_path": str(DB_PATH),
+        "database_exists": DB_PATH.exists(),
+        "core_data_loaded": core_data_loaded,
+        "needs_sync": not core_data_loaded,
+        "counts": counts,
+        "last_sync": last_sync,
+    }
+
+
+@router.post("/sync")
+async def run_manual_sync():
+    """Run the Sleeper/FantasyCalc sync path and return refreshed local counts."""
+    try:
+        await daily_sync.main()
+    except Exception as exc:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                "INSERT INTO sync_log (sync_type, status, message, ran_at) VALUES (?, ?, ?, ?)",
+                ("manual_sync", "error", str(exc)[:500], datetime.now(timezone.utc).isoformat()),
+            )
+            await db.commit()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return await get_sync_status()
+
+
+@router.get("/sync-center")
+async def get_sync_center():
+    """Return data freshness, import history, and unsupported-platform guidance."""
+    status = await get_sync_status()
+    async with aiosqlite.connect(DB_PATH) as db:
+        latest_player_sync = await latest_value(db, "players", "updated_at")
+        latest_roster_sync = await latest_value(db, "rosters", "updated_at")
+        latest_baseball = await latest_value(db, "baseball_players", "updated_at")
+        latest_import = await latest_value(db, "import_history", "imported_at")
+        imports = await recent_imports(db)
+
+    freshness = [
+        freshness_payload(latest_player_sync, "Football player data"),
+        freshness_payload(latest_roster_sync, "Football roster data", stale_after_hours=24),
+        freshness_payload(latest_baseball, "Baseball cache", stale_after_hours=168),
+        freshness_payload(latest_import, "Manual CSV imports", stale_after_hours=720),
+    ]
+    failures = [
+        item for item in imports
+        if item["status"] != "success" or "error" in (item["message"] or "").lower()
+    ]
+
+    return {
+        **status,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "freshness": freshness,
+        "recent_imports": imports,
+        "recent_failures": failures[:5],
+        "unsupported_platforms": PLATFORM_STATUS,
+        "templates": {
+            sport: {
+                "platforms": meta["platforms"],
+                "required_columns": meta["required_columns"],
+                "csv": meta["template"],
+            }
+            for sport, meta in SUPPORTED_IMPORTS.items()
+        },
+    }
+
+
+@router.get("/import-templates")
+async def get_import_templates():
+    return {
+        sport: {
+            "platforms": meta["platforms"],
+            "required_columns": meta["required_columns"],
+            "csv": meta["template"],
+        }
+        for sport, meta in SUPPORTED_IMPORTS.items()
+    }
+
+
+@router.post("/import-csv")
+async def import_csv(req: CsvImportRequest):
+    platform = req.platform.lower().strip()
+    supported = SUPPORTED_IMPORTS[req.sport]["platforms"]
+    if platform not in supported:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{req.platform} {req.sport} imports are not supported. Use one of: {', '.join(supported)}.",
+        )
+
+    rows = parse_import_csv(req)
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            if req.sport == "football":
+                rows_imported, message = await import_football_csv(db, req, rows)
+            else:
+                rows_imported, message = await import_baseball_csv(db, req, rows)
+            await record_import(db, req, "success", rows_imported, message)
+            await db.commit()
+        except Exception as exc:
+            await record_import(db, req, "error", 0, str(exc))
+            await db.commit()
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"status": "success", "rows_imported": rows_imported, "message": message}
 
 
 @router.post("/refresh-cache")
