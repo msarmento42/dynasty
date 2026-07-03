@@ -1910,34 +1910,19 @@ async def get_news(league_id: Optional[str] = None):
 
         owned_ids: Optional[set] = None
         if league_id:
-            # Collect all player IDs Marcus owns in this league
+            # Collect the player IDs on Marcus's own roster in this league.
+            # `rosters` has no `my_roster_id` column -- it lives on `leagues` -- so
+            # this has to join through `leagues.my_roster_id` (same pattern as
+            # get_value_movers/get_team_needs), not query `rosters.my_roster_id`
+            # directly (that was issue #275: an OperationalError on every call).
             async with db.execute(
-                "SELECT player_ids_json FROM rosters WHERE league_id = ? AND my_roster_id IS NOT NULL "
-                "UNION ALL "
-                "SELECT r.player_ids_json FROM rosters r "
-                "JOIN leagues l ON l.league_id = r.league_id AND l.my_roster_id = r.roster_id "
-                "WHERE r.league_id = ?",
-                (league_id, league_id),
+                "SELECT r.player_ids_json "
+                "FROM leagues l JOIN rosters r ON r.league_id = l.league_id AND r.roster_id = l.my_roster_id "
+                "WHERE l.league_id = ?",
+                (league_id,),
             ) as cur:
-                rows = await cur.fetchall()
-
-            if rows:
-                owned_ids = set()
-                for row in rows:
-                    ids = json.loads(row[0] or "[]")
-                    owned_ids.update(ids)
-
-            # If no roster match found, fetch all rosters for league and find Marcus's
-            if not owned_ids:
-                async with db.execute(
-                    "SELECT l.my_roster_id, r.player_ids_json "
-                    "FROM leagues l JOIN rosters r ON r.league_id = l.league_id AND r.roster_id = l.my_roster_id "
-                    "WHERE l.league_id = ?",
-                    (league_id,),
-                ) as cur:
-                    row = await cur.fetchone()
-                if row:
-                    owned_ids = set(json.loads(row[1] or "[]"))
+                row = await cur.fetchone()
+            owned_ids = set(json.loads(row[0] or "[]")) if row else set()
 
         if owned_ids is not None and len(owned_ids) == 0:
             # No players found for this league
