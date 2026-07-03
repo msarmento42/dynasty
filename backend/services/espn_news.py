@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from backend.services import sleeper
+from backend.services.player_identity import espn_to_sleeper_map
 
 
 ESPN_NEWS_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/news"
@@ -41,22 +42,6 @@ def _normalize_article(article: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _espn_to_sleeper_map(all_players: dict[str, Any]) -> dict[str, str]:
-    mapping = {}
-    for sleeper_id, player in all_players.items():
-        if not isinstance(player, dict):
-            continue
-        search_values = [
-            player.get("espn_id"),
-            player.get("espnId"),
-            player.get("metadata", {}).get("espn_id") if isinstance(player.get("metadata"), dict) else None,
-        ]
-        for espn_id in search_values:
-            if espn_id is not None:
-                mapping[str(espn_id)] = str(sleeper_id)
-    return mapping
-
-
 async def fetch_nfl_news(limit: int = 50) -> list[dict[str, Any]]:
     """Fetch and normalize the latest NFL news from ESPN."""
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
@@ -74,7 +59,7 @@ async def fetch_news_for_players(sleeper_ids: list[str]) -> list[dict[str, Any]]
     """Fetch NFL news and return articles mentioning any of the provided Sleeper player IDs."""
     wanted = {str(sleeper_id) for sleeper_id in sleeper_ids}
     all_players = await sleeper.fetch_all_players()
-    espn_to_sleeper = _espn_to_sleeper_map(all_players)
+    espn_to_sleeper = espn_to_sleeper_map(all_players)
     articles = await fetch_nfl_news()
 
     filtered = []
