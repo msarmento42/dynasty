@@ -28,6 +28,7 @@ from backend.services.fantasy_engine import (  # noqa: E402
     player_value_trend,
     trade_positional_impact,
 )
+from backend.services.recommendations import generate_football_recommendations  # noqa: E402
 from backend.services.proposals import generate_proposals  # noqa: E402
 from backend.services import sleeper as sleeper_svc  # noqa: E402
 
@@ -381,6 +382,12 @@ async def get_my_roster(league_id: str):
         "total_adjusted_value": total,
         "data_confidence": aggregate_confidence(players),
     }
+
+
+@router.get("/recommendations/{league_id}")
+async def get_recommendations(league_id: str, limit: int = 12):
+    """Return unified, explainable football recommendations for dashboard cards."""
+    return await generate_football_recommendations(league_id, limit=max(1, min(limit, 24)))
 
 
 @router.get("/league/{league_id}/roster-value-history")

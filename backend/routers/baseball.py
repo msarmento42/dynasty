@@ -16,6 +16,8 @@ from backend.services.mlb_stats import (
 )
 import asyncio
 
+from backend.services.recommendations import generate_baseball_recommendations
+
 router = APIRouter(prefix="/api/baseball", tags=["baseball"])
 
 
@@ -43,6 +45,12 @@ def baseball_confidence(row) -> dict:
         "updated_at": row["updated_at"],
         "warnings": warnings,
     }
+
+
+@router.get("/recommendations")
+async def get_baseball_recommendations(limit: int = Query(8, ge=1, le=24)):
+    """Return unified baseball recommendations for dashboard cards."""
+    return await generate_baseball_recommendations(limit=limit)
 
 
 # ---------------------------------------------------------------------------

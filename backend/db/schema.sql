@@ -136,6 +136,15 @@ CREATE TABLE IF NOT EXISTS sync_log (
     ran_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS recommendation_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    league_id TEXT,
+    sport TEXT NOT NULL,
+    generated_at TEXT NOT NULL,
+    recommendation_count INTEGER NOT NULL,
+    payload_json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS league_settings (
     league_id TEXT PRIMARY KEY,
     league_name TEXT,
