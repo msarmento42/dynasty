@@ -45,6 +45,10 @@ python3 -m backend.scripts.daily_sync
 Open the frontend at `http://localhost:5173`. The backend runs on `http://localhost:8001` by default.
 
 ## Local data controls
+### Data sync
+
+The script `backend/scripts/daily_sync.py` is the authoritative source for syncing data into `backend/fantasy.db`. It can be run independently (e.g., `python3 -m backend.scripts.daily_sync`) and updates the database used by the FastAPI endpoints. A separate fantasy sync implementation exists in another project and does **not** affect this app's data.
+
 
 The app shell includes a Local Data panel that checks the SQLite database, shows row counts for the core tables, and can run a manual sync from the browser.
 
