@@ -4,6 +4,7 @@ import LeagueSelector from '../components/LeagueSelector.jsx';
 import ExportButton from '../components/ExportButton.jsx';
 import ValueTrendChart from '../components/ValueTrendChart.jsx';
 import ConfidenceBadge from '../components/ConfidenceBadge.jsx';
+import PlayerChip from '../components/PlayerChip.jsx';
 
 const POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
 
@@ -577,7 +578,7 @@ export default function Roster() {
                             {player.full_name}
                           </td>
                           <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
-                            {player.position}
+                            <PlayerChip position={player.position} team={player.team} />
                           </td>
                           <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
                             {player.age}
