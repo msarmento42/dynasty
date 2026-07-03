@@ -62,7 +62,9 @@ async def start_draft(req: DraftStartRequest):
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """
-            INSERT INTO draft_sessions (sport, num_teams, num_rounds, user_pick_slot, mode, faab_budget, current_pick, created_at)
+            INSERT INTO draft_sessions (
+                sport, num_teams, num_rounds, user_pick_slot, mode, faab_budget, current_pick, created_at
+            )
             VALUES (?, ?, ?, ?, ?, ?, 1, ?)
             """,
             (req.sport, req.num_teams, req.num_rounds, req.user_pick_slot, req.mode, req.faab_budget, now),
@@ -91,10 +93,16 @@ async def make_pick(session_id: int, req: DraftPickRequest):
         try:
             await db.execute(
                 """
-                INSERT INTO draft_picks (session_id, overall_pick, round, pick_in_round, team_slot, player_id, player_name, position, faab_spent, picked_at)
+                INSERT INTO draft_picks (
+                    session_id, overall_pick, round, pick_in_round, team_slot,
+                    player_id, player_name, position, faab_spent, picked_at
+                )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (session_id, overall_pick, round_num, pick_in_round, req.team_slot, req.player_id, req.player_name, req.position, req.faab_spent, now),
+                (
+                    session_id, overall_pick, round_num, pick_in_round, req.team_slot,
+                    req.player_id, req.player_name, req.position, req.faab_spent, now,
+                ),
             )
         except aiosqlite.IntegrityError:
             raise HTTPException(409, "this pick has already been made")
@@ -125,7 +133,10 @@ async def draft_state(session_id: int):
         is_user_turn = (not is_complete) and on_the_clock == session["user_pick_slot"]
 
         # positional need for the user's team so far
-        user_positions_drafted = [p["position"] for p in picks if p["team_slot"] == session["user_pick_slot"] and p["position"]]
+        user_positions_drafted = [
+            p["position"] for p in picks
+            if p["team_slot"] == session["user_pick_slot"] and p["position"]
+        ]
         need_targets = FOOTBALL_NEED_TARGETS if sport == "football" else BASEBALL_NEED_TARGETS
         pos_counts = {pos: user_positions_drafted.count(pos) for pos in need_targets}
         needs = {pos: max(0, target - pos_counts.get(pos, 0)) for pos, target in need_targets.items()}
@@ -136,7 +147,9 @@ async def draft_state(session_id: int):
         else:
             value_col, table, id_col = "dynasty_value", "baseball_players", "mlb_id"
 
-        rows = await (await db.execute(f"SELECT {id_col} AS id, name, position, {value_col} AS value FROM {table}")).fetchall()
+        rows = await (await db.execute(
+            f"SELECT {id_col} AS id, name, position, {value_col} AS value FROM {table}"
+        )).fetchall()
         available = [dict(r) for r in rows if str(r["id"]) not in {str(t) for t in taken_ids}]
         for p in available:
             need_boost = 1.15 if needs.get(p["position"], 0) > 0 else 1.0
