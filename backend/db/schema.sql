@@ -187,3 +187,9 @@ CREATE TABLE IF NOT EXISTS baseball_rosters (
     notes TEXT,
     UNIQUE(roster_name, mlb_id)
 );
+
+CREATE TABLE IF NOT EXISTS user_preferences (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    value_mode TEXT NOT NULL DEFAULT 'dynasty' CHECK (value_mode IN ('dynasty', 'redraft')),
+    updated_at TEXT
+);
