@@ -358,6 +358,27 @@ function GlobalSearch() {
 export default function App() {
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('darkMode') === 'true');
 
+  const [valueMode, setValueMode] = useState('dynasty');
+
+  useEffect(() => {
+    fetch('/api/dynasty/preferences')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && data.value_mode) setValueMode(data.value_mode);
+      })
+      .catch(() => {});
+  }, []);
+
+  const toggleValueMode = () => {
+    const next = valueMode === 'dynasty' ? 'redraft' : 'dynasty';
+    setValueMode(next);
+    fetch('/api/dynasty/preferences', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value_mode: next }),
+    }).catch(() => {});
+  };
+
   useEffect(() => {
     if (darkMode) {
       document.body.classList.add('dark-mode');
@@ -390,6 +411,18 @@ export default function App() {
         <span style={{ color: 'var(--border-color)', margin: '0 4px' }}>|</span>
         <Link to="/baseball">⚾ Baseball</Link>
         <GlobalSearch />
+        <button
+          className="dark-mode-toggle"
+          onClick={toggleValueMode}
+          aria-label="Toggle dynasty/redraft value mode"
+          title={
+            valueMode === 'dynasty'
+              ? 'Dynasty values shown. Redraft mode is not yet wired to real ADP data — switching persists your preference but values will not change yet.'
+              : 'Redraft mode selected (not yet wired to real ADP-based values — this is a placeholder preference, not live data).'
+          }
+        >
+          {valueMode === 'dynasty' ? '🏆 Dynasty' : '🔁 Redraft*'}
+        </button>
         <button
           className="dark-mode-toggle"
           onClick={() => setDarkMode((prev) => !prev)}
