@@ -397,6 +397,77 @@ def trade_positional_impact(side_a_players: list, side_b_players: list) -> dict:
     }
 
 
+def _gini(values: list[float]) -> float:
+    """Return a 0-1 inequality score for a list of non-negative values."""
+    safe_values = sorted(max(0.0, float(value or 0)) for value in values)
+    if not safe_values or sum(safe_values) <= 0:
+        return 0.0
+
+    count = len(safe_values)
+    weighted_sum = sum((index + 1) * value for index, value in enumerate(safe_values))
+    return ((2 * weighted_sum) / (count * sum(safe_values))) - ((count + 1) / count)
+
+
+def _scarcity_label(score: int) -> str:
+    if score >= 70:
+        return "Critical leverage"
+    if score >= 45:
+        return "Scarce"
+    if score >= 25:
+        return "Moderate"
+    return "Evenly distributed"
+
+
+def positional_scarcity_index(teams: list[dict], positions: tuple = TRADE_POSITIONS) -> list[dict]:
+    """
+    Compute per-position scarcity from rostered dynasty value distribution.
+
+    Higher scores mean quality at that position is concentrated on fewer teams,
+    which creates trade leverage for managers with strong starters there.
+    """
+    team_count = max(1, len(teams))
+    expected_share = 1 / team_count
+    result = []
+
+    for position in positions:
+        team_values = []
+        total_value = 0.0
+        for team in teams:
+            value = sum(
+                float(player.get("adjusted_value") or player.get("value_sf") or player.get("value_1qb") or 0)
+                for player in team.get("players", [])
+                if (player.get("position") or "").upper() == position
+            )
+            total_value += value
+            team_values.append({
+                "roster_id": team.get("roster_id"),
+                "team_name": team.get("team_name") or team.get("owner") or f"Team {team.get('roster_id')}",
+                "is_mine": bool(team.get("is_mine")),
+                "value": round(value),
+            })
+
+        team_values.sort(key=lambda item: item["value"], reverse=True)
+        for rank, item in enumerate(team_values, 1):
+            item["rank"] = rank
+            item["share_pct"] = round((item["value"] / total_value * 100) if total_value else 0, 1)
+
+        top_share = (team_values[0]["value"] / total_value) if total_value and team_values else 0
+        gini = _gini([item["value"] for item in team_values])
+        score = round(min(100, max(0, (gini * 85) + max(0, top_share - expected_share) * 180)))
+
+        result.append({
+            "position": position,
+            "scarcity_score": score,
+            "scarcity_label": _scarcity_label(score),
+            "distribution_quality": round(gini, 3),
+            "league_total_value": round(total_value),
+            "top_team": team_values[0] if team_values else None,
+            "teams": team_values,
+        })
+
+    return result
+
+
 # -- Player enrichment ------------------------------------------------------
 
 def enrich_player(player: dict, league_id: str) -> dict:

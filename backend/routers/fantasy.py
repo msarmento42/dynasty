@@ -26,6 +26,7 @@ from backend.services.fantasy_engine import (  # noqa: E402
     enrich_player,
     pick_value,
     player_value_trend,
+    positional_scarcity_index,
     project_age_curve_values,
     trade_positional_impact,
 )
@@ -628,6 +629,38 @@ async def get_all_rosters(league_id: str):
 
     result.sort(key=lambda r: r["total_adjusted_value"], reverse=True)
     return result
+
+
+@router.get("/league/{league_id}/positional-scarcity")
+async def get_positional_scarcity(league_id: str):
+    """Return per-position scarcity scores based on rostered league value."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        league = await get_league_row(db, league_id)
+        my_roster_id = league["config"].get("my_roster_id", league["my_roster_id"])
+
+        async with db.execute(
+            "SELECT roster_id, owner_display_name, player_ids_json "
+            "FROM rosters WHERE league_id=? ORDER BY roster_id",
+            (league_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+        teams = []
+        for roster_id, owner, pid_json in rows:
+            players = await get_players_for_ids(db, json.loads(pid_json or "[]"), league_id)
+            teams.append({
+                "roster_id": roster_id,
+                "team_name": owner or f"Team {roster_id}",
+                "is_mine": roster_id == my_roster_id,
+                "players": players,
+            })
+
+    scarcity = positional_scarcity_index(teams)
+    return {
+        "league_id": league_id,
+        "league_name": league["name"],
+        "positions": scarcity,
+    }
 
 
 @router.post("/trade/evaluate")
