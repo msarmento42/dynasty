@@ -30,6 +30,91 @@ function gradeColor(score) {
   return '#b42318';
 }
 
+function scarcityColor(score) {
+  if (score >= 70) return '#b42318';
+  if (score >= 45) return '#ea580c';
+  if (score >= 25) return '#ca8a04';
+  return '#15803d';
+}
+
+function ScarcityHeatmap({ scarcity }) {
+  const positions = scarcity?.positions || [];
+  if (positions.length === 0) return null;
+
+  return (
+    <section
+      style={{
+        background: 'var(--bg-card, #ffffff)',
+        border: '1px solid var(--border-color, #e0e0e0)',
+        borderRadius: 8,
+        display: 'grid',
+        gap: 14,
+        marginBottom: 20,
+        padding: 16,
+      }}
+    >
+      <div>
+        <h2 style={{ color: 'var(--text-primary, #1a1a2e)', margin: 0 }}>Positional Scarcity</h2>
+        <p style={{ color: 'var(--text-secondary, #667085)', margin: '4px 0 0' }}>
+          Higher scores mean rostered value is concentrated on fewer teams.
+        </p>
+      </div>
+      <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+        {positions.map((position) => (
+          <div
+            key={position.position}
+            style={{
+              border: '1px solid var(--border-color, #e0e0e0)',
+              borderRadius: 8,
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                alignItems: 'center',
+                background: '#f8fafc',
+                display: 'flex',
+                justifyContent: 'space-between',
+                padding: '10px 12px',
+              }}
+            >
+              <strong>{position.position}</strong>
+              <span style={{ color: scarcityColor(position.scarcity_score), fontWeight: 800 }}>
+                {position.scarcity_score}
+              </span>
+            </div>
+            <div style={{ display: 'grid', gap: 8, padding: 12 }}>
+              <div style={{ color: scarcityColor(position.scarcity_score), fontSize: 13, fontWeight: 700 }}>
+                {position.scarcity_label}
+              </div>
+              <div style={{ color: '#667085', fontSize: 12 }}>
+                Leader: {position.top_team?.team_name || 'None'} ({position.top_team?.share_pct || 0}%)
+              </div>
+              {(position.teams || []).slice(0, 4).map((team) => (
+                <div key={team.roster_id} style={{ display: 'grid', gap: 4 }}>
+                  <div style={{ display: 'flex', fontSize: 12, justifyContent: 'space-between' }}>
+                    <span>{team.team_name}</span>
+                    <span>{team.share_pct}%</span>
+                  </div>
+                  <div style={{ background: '#edf2f7', borderRadius: 999, height: 8, overflow: 'hidden' }}>
+                    <div
+                      style={{
+                        background: team.is_mine ? '#2563eb' : scarcityColor(position.scarcity_score),
+                        height: '100%',
+                        width: `${Math.min(100, team.share_pct || 0)}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function TeamRadarCard({ team, color }) {
   const axes = ['QB', 'RB', 'WR', 'TE', 'Picks'];
   const chartData = axes.map((key) => ({
@@ -124,6 +209,7 @@ function TeamRadarCard({ team, color }) {
 
 export default function TeamNeeds() {
   const [data, setData] = useState(null);
+  const [scarcity, setScarcity] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -132,12 +218,18 @@ export default function TeamNeeds() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`/fantasy/league/${leagueId}/team-needs`);
-      if (!res.ok) throw new Error('Unable to load team needs');
-      setData(await res.json());
+      const [needsRes, scarcityRes] = await Promise.all([
+        fetch(`/fantasy/league/${leagueId}/team-needs`),
+        fetch(`/fantasy/league/${leagueId}/positional-scarcity`),
+      ]);
+      if (!needsRes.ok) throw new Error('Unable to load team needs');
+      if (!scarcityRes.ok) throw new Error('Unable to load positional scarcity');
+      setData(await needsRes.json());
+      setScarcity(await scarcityRes.json());
     } catch (err) {
       setError(err.message);
       setData(null);
+      setScarcity(null);
     } finally {
       setLoading(false);
     }
@@ -158,21 +250,24 @@ export default function TeamNeeds() {
         {error && <p style={{ color: '#b42318' }}>{error}</p>}
 
         {data && !loading && (
-          <div
-            style={{
-              display: 'grid',
-              gap: 16,
-              gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-            }}
-          >
-            {data.map((team, idx) => (
-              <TeamRadarCard
-                key={team.roster_id}
-                team={team}
-                color={TEAM_COLORS[idx % TEAM_COLORS.length]}
-              />
-            ))}
-          </div>
+          <>
+            <ScarcityHeatmap scarcity={scarcity} />
+            <div
+              style={{
+                display: 'grid',
+                gap: 16,
+                gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+              }}
+            >
+              {data.map((team, idx) => (
+                <TeamRadarCard
+                  key={team.roster_id}
+                  team={team}
+                  color={TEAM_COLORS[idx % TEAM_COLORS.length]}
+                />
+              ))}
+            </div>
+          </>
         )}
       </section>
     </main>

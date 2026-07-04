@@ -72,10 +72,53 @@ function ValueList({ title, players }) {
   );
 }
 
+function scarcityColor(score) {
+  if (score >= 70) return '#b42318';
+  if (score >= 45) return '#ea580c';
+  if (score >= 25) return '#ca8a04';
+  return '#15803d';
+}
+
+function ScarcityContext({ positions }) {
+  if (!positions.length) return null;
+
+  return (
+    <section style={{ borderTop: '1px solid #e4e7ec', display: 'grid', gap: 10, paddingTop: 12 }}>
+      <strong>Scarcity context</strong>
+      {positions.map((position) => (
+        <div
+          key={position.position}
+          style={{
+            border: '1px solid #e4e7ec',
+            borderRadius: 8,
+            display: 'grid',
+            gap: 4,
+            padding: 10,
+          }}
+        >
+          <div style={{ alignItems: 'center', display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ fontWeight: 800 }}>{position.position}</span>
+            <span style={{ color: scarcityColor(position.scarcity_score), fontWeight: 800 }}>
+              {position.scarcity_score}
+            </span>
+          </div>
+          <div style={{ color: scarcityColor(position.scarcity_score), fontSize: 13, fontWeight: 700 }}>
+            {position.scarcity_label}
+          </div>
+          <div style={{ color: '#667085', fontSize: 12 }}>
+            Leader: {position.top_team?.team_name || 'None'} ({position.top_team?.share_pct || 0}% of league value)
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 export default function TradeBuilder() {
   const [leagueId, setLeagueId] = useState('');
   const [allRosters, setAllRosters] = useState([]);
   const [opponentRosterId, setOpponentRosterId] = useState('');
+  const [scarcity, setScarcity] = useState(null);
   const [sideA, setSideA] = useState([]);
   const [sideB, setSideB] = useState([]);
   const [result, setResult] = useState(null);
@@ -89,18 +132,27 @@ export default function TradeBuilder() {
     setResult(null);
     setSideA([]);
     setSideB([]);
+    setScarcity(null);
 
     try {
-      const response = await fetch(`/fantasy/league/${selectedLeagueId}/all-rosters`);
+      const [response, scarcityResponse] = await Promise.all([
+        fetch(`/fantasy/league/${selectedLeagueId}/all-rosters`),
+        fetch(`/fantasy/league/${selectedLeagueId}/positional-scarcity`),
+      ]);
       if (!response.ok) {
         throw new Error('Unable to load rosters');
       }
+      if (!scarcityResponse.ok) {
+        throw new Error('Unable to load positional scarcity');
+      }
       const data = await response.json();
       setAllRosters(data);
+      setScarcity(await scarcityResponse.json());
       const firstOpponent = data.find((roster) => !roster.is_mine);
       setOpponentRosterId(firstOpponent ? String(firstOpponent.roster_id) : '');
     } catch (err) {
       setAllRosters([]);
+      setScarcity(null);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -112,6 +164,11 @@ export default function TradeBuilder() {
     () => allRosters.find((roster) => String(roster.roster_id) === opponentRosterId),
     [allRosters, opponentRosterId],
   );
+  const involvedScarcity = useMemo(() => {
+    if (!result || !scarcity?.positions) return [];
+    const involved = new Set([...sideA, ...sideB].map((player) => player.position).filter(Boolean));
+    return scarcity.positions.filter((position) => involved.has(position.position));
+  }, [result, scarcity, sideA, sideB]);
 
   function addPlayer(player, setSide) {
     setSide((current) => {
@@ -237,6 +294,7 @@ export default function TradeBuilder() {
                 <strong>Side B: {Number(result.side_b_value || 0).toLocaleString()}</strong>
                 <ValueList title="You send" players={valuesForSide(result, 'side_a_players', sideA)} />
                 <ValueList title="You receive" players={valuesForSide(result, 'side_b_players', sideB)} />
+                <ScarcityContext positions={involvedScarcity} />
                 <PositionalImpactDisplay impact={result.positional_impact} />
                 <p>
                   Delta: {Number(result.delta || 0).toLocaleString()} ({Number(result.delta_pct || 0).toFixed(1)}%)
