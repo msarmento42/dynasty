@@ -41,6 +41,14 @@ AGE_CURVES = {
     "TE": {"rising": (0, 26), "prime": (26, 30), "declining": (30, 99)},
 }
 
+AGE_CURVE_PEAKS = {"QB": 28, "RB": 24, "WR": 26, "TE": 27}
+AGE_CURVE_DECAY = {
+    "QB": {"pre_peak": 0.018, "post_peak": 0.035},
+    "RB": {"pre_peak": 0.035, "post_peak": 0.105},
+    "WR": {"pre_peak": 0.026, "post_peak": 0.060},
+    "TE": {"pre_peak": 0.024, "post_peak": 0.050},
+}
+
 
 def classify_career_stage(position: str, age: float) -> str:
     """Return 'rising', 'prime', or 'declining' for a player."""
@@ -58,6 +66,51 @@ def years_in_prime_remaining(position: str, age: float) -> float:
     prime_end = curves["prime"][1]
     remaining = prime_end - age
     return max(0.0, round(remaining, 1))
+
+
+def age_curve_multiplier(position: str, age: float) -> float:
+    """Return a position-specific dynasty value multiplier for the given age."""
+    pos = position if position in AGE_CURVE_PEAKS else "WR"
+    peak_age = AGE_CURVE_PEAKS[pos]
+    decay = AGE_CURVE_DECAY[pos]
+    if age <= 0:
+        return 1.0
+    if age <= peak_age:
+        return max(0.65, 1 - ((peak_age - age) * decay["pre_peak"]))
+    return max(0.25, 1 - ((age - peak_age) * decay["post_peak"]))
+
+
+def project_age_curve_values(player: dict, current_value: int, years: tuple = (1, 3, 5)) -> dict:
+    """Project current dynasty value forward using position-specific age curves."""
+    position = player.get("position") or "WR"
+    age = float(player.get("age") or 0)
+    safe_value = max(0, int(current_value or 0))
+    current_multiplier = age_curve_multiplier(position, age) or 1.0
+    projections = []
+
+    for year in years:
+        future_age = round(age + year, 1) if age > 0 else None
+        future_multiplier = age_curve_multiplier(position, future_age or age)
+        projected_value = (
+            round(safe_value * (future_multiplier / current_multiplier))
+            if current_multiplier
+            else safe_value
+        )
+        projections.append({
+            "year": year,
+            "age": future_age,
+            "multiplier": round(future_multiplier, 3),
+            "projected_value": max(0, projected_value),
+        })
+
+    return {
+        "position": position,
+        "current_age": age or None,
+        "current_value": safe_value,
+        "current_multiplier": round(current_multiplier, 3),
+        "peak_age": AGE_CURVE_PEAKS.get(position, AGE_CURVE_PEAKS["WR"]),
+        "projections": projections,
+    }
 
 
 # -- Value adjustments ------------------------------------------------------
