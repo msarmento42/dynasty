@@ -24,6 +24,7 @@ import Rookies from './pages/Rookies.jsx';
 import MockDraft from './pages/MockDraft.jsx';
 import DataDoctor from './pages/DataDoctor.jsx';
 import Dashboard from './pages/Dashboard.jsx';
+import FantasyProsReadiness from './pages/FantasyProsReadiness.jsx';
 import SimulationLab from './pages/SimulationLab.jsx';
 
 const POS_COLORS = {
@@ -396,6 +397,7 @@ export default function App() {
       <nav style={{ flexWrap: 'wrap', gap: '4px 0' }}>
         <Link to="/">Roster</Link>
         <Link to="/dashboard">Dashboard</Link>
+        <Link to="/fantasypros-readiness">FantasyPros Readiness</Link>
         <Link to="/trade">Trade Builder</Link>
         <Link to="/proposals">Proposals</Link>
         <Link to="/playoffs">Playoffs</Link>
@@ -441,6 +443,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Roster />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/fantasypros-readiness" element={<FantasyProsReadiness />} />
         <Route path="/trade" element={<TradeBuilder />} />
         <Route path="/proposals" element={<Proposals />} />
         <Route path="/playoffs" element={<Playoffs />} />
