@@ -25,6 +25,7 @@ import MockDraft from './pages/MockDraft.jsx';
 import DataDoctor from './pages/DataDoctor.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import SimulationLab from './pages/SimulationLab.jsx';
+import Arbitrage from './pages/Arbitrage.jsx';
 
 const POS_COLORS = {
   QB: { bg: '#e0f2fe', text: '#0369a1' },
@@ -398,6 +399,7 @@ export default function App() {
         <Link to="/dashboard">Dashboard</Link>
         <Link to="/trade">Trade Builder</Link>
         <Link to="/proposals">Proposals</Link>
+        <Link to="/arbitrage">Arbitrage</Link>
         <Link to="/playoffs">Playoffs</Link>
         <Link to="/picks">Pick Calculator</Link>
         <Link to="/team-needs">Team Needs</Link>
@@ -443,6 +445,7 @@ export default function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/trade" element={<TradeBuilder />} />
         <Route path="/proposals" element={<Proposals />} />
+        <Route path="/arbitrage" element={<Arbitrage />} />
         <Route path="/playoffs" element={<Playoffs />} />
         <Route path="/players/:playerId" element={<PlayerProfile />} />
         <Route path="/picks" element={<PickCalculator />} />

@@ -194,6 +194,101 @@ def manager_payload(row: tuple, my_roster_id: int) -> dict:
     }
 
 
+def redraft_proxy_value(player: dict) -> int:
+    """Estimate current-season value until a dedicated redraft feed exists."""
+    dynasty_value = float(player.get("adjusted_value") or player.get("value_sf") or player.get("value_1qb") or 0)
+    age = float(player.get("age") or 0)
+    position = player.get("position") or "WR"
+    trend = float(player.get("trend_30d") or 0)
+    injury_status = (player.get("injury_status") or "").upper()
+    stage = player.get("career_stage") or (classify_arbitrage_stage(position, age) if age else "unknown")
+
+    stage_multiplier = {
+        "rookie": 0.68,
+        "young": 0.86,
+        "prime": 1.04,
+        "veteran": 1.16,
+        "decline": 0.88,
+        "unknown": 0.95,
+    }.get(stage, 0.95)
+    position_multiplier = {
+        "RB": 1.08,
+        "WR": 1.02,
+        "TE": 0.96,
+        "QB": 0.94,
+    }.get(position, 1.0)
+    injury_multiplier = {
+        "OUT": 0.45,
+        "DOUBTFUL": 0.65,
+        "QUESTIONABLE": 0.82,
+        "IR": 0.35,
+        "PUP": 0.5,
+    }.get(injury_status, 1.0)
+    trend_bonus = max(-350, min(350, trend * 1.5))
+    return max(0, round((dynasty_value * stage_multiplier * position_multiplier * injury_multiplier) + trend_bonus))
+
+
+def classify_arbitrage_stage(position: str, age: float) -> str:
+    if not age:
+        return "unknown"
+    if age <= 23:
+        return "rookie" if age <= 22 else "young"
+    if position == "RB":
+        if age <= 26:
+            return "prime"
+        return "veteran" if age <= 28 else "decline"
+    if position in ("WR", "TE"):
+        if age <= 28:
+            return "prime"
+        return "veteran" if age <= 31 else "decline"
+    if position == "QB":
+        if age <= 31:
+            return "prime"
+        return "veteran" if age <= 36 else "decline"
+    return "prime"
+
+
+def arbitrage_category(dynasty_value: int, redraft_value: int, stage: str, is_mine: bool) -> str:
+    gap = redraft_value - dynasty_value
+    absolute_gap = abs(gap)
+    if gap >= 450 and redraft_value >= 900:
+        return "sell_for_future" if is_mine else "win_now_buys"
+    if gap <= -450 and dynasty_value >= 900:
+        return "rebuild_buys"
+    if absolute_gap >= 250:
+        return "watch"
+    if stage in ("rookie", "young") and dynasty_value >= 700:
+        return "watch"
+    return "watch"
+
+
+def arbitrage_explanation(player: dict, category: str, gap: int) -> str:
+    owner = player.get("owner_name")
+    owner_text = f" on {owner}'s roster" if owner else " on waivers"
+    stage = player.get("career_stage", "unknown")
+    dynasty = player.get("dynasty_value", 0)
+    redraft = player.get("redraft_value", 0)
+    if category == "win_now_buys":
+        return (
+            f"{player['name']} has a current-season edge of {gap:+,} over dynasty value{owner_text}; "
+            f"that makes him a win-now target if the other manager prices him like a long-term asset."
+        )
+    if category == "rebuild_buys":
+        return (
+            f"{player['name']} carries {abs(gap):,} more dynasty value than current-season value{owner_text}; "
+            f"the {stage} profile fits a rebuild buy or patient stash."
+        )
+    if category == "sell_for_future":
+        return (
+            f"{player['name']} is more useful now than later by {gap:+,}; if he is on your roster, "
+            f"shop the redraft usefulness for younger dynasty value."
+        )
+    return (
+        f"{player['name']} is worth monitoring: dynasty {dynasty:,}, redraft proxy {redraft:,}, "
+        f"gap {gap:+,}{owner_text}."
+    )
+
+
 @router.get("/status")
 async def status():
     return {"status": "dynasty engine online"}
@@ -534,6 +629,155 @@ async def get_all_rosters(league_id: str):
 
     result.sort(key=lambda r: r["total_adjusted_value"], reverse=True)
     return result
+
+
+@router.get("/league/{league_id}/arbitrage")
+async def get_arbitrage_targets(
+    league_id: str,
+    position: Optional[str] = None,
+    strategy: Optional[str] = None,
+    limit: int = 18,
+):
+    """Return dynasty-vs-current-season value gaps for rostered and available players."""
+    allowed_strategies = {"all", "win_now_buys", "rebuild_buys", "sell_for_future", "watch"}
+    selected_strategy = strategy or "all"
+    if selected_strategy not in allowed_strategies:
+        raise HTTPException(status_code=400, detail="Invalid strategy filter.")
+
+    allowed_positions = {"QB", "RB", "WR", "TE", "K", "DEF"}
+    selected_position = position.upper() if position else None
+    if selected_position and selected_position not in allowed_positions:
+        raise HTTPException(status_code=400, detail="Invalid position filter.")
+
+    per_bucket_limit = max(4, min(limit, 40))
+    async with aiosqlite.connect(DB_PATH) as db:
+        league = await get_league_row(db, league_id)
+        my_roster_id = league["config"].get("my_roster_id", league["my_roster_id"])
+
+        async with db.execute(
+            "SELECT roster_id, owner_display_name, player_ids_json FROM rosters WHERE league_id=?",
+            (league_id,),
+        ) as cur:
+            roster_rows = await cur.fetchall()
+
+        ownership = {}
+        rostered_ids = set()
+        for roster_id, owner, player_ids_json in roster_rows:
+            player_ids = json.loads(player_ids_json or "[]")
+            for player_id in player_ids:
+                rostered_ids.add(str(player_id))
+                ownership[str(player_id)] = {
+                    "roster_id": roster_id,
+                    "owner_name": owner or f"Team {roster_id}",
+                    "is_mine": roster_id == my_roster_id,
+                }
+
+        filters = ["position IN ('QB','RB','WR','TE','K','DEF')"]
+        params = []
+        if selected_position:
+            filters.append("position = ?")
+            params.append(selected_position)
+        where_sql = " AND ".join(filters)
+
+        async with db.execute(
+            f"""
+            SELECT sleeper_id, name, position, team, age, value_sf, value_1qb,
+                   trend_30d, injury_status, updated_at
+            FROM players
+            WHERE {where_sql}
+            ORDER BY COALESCE(value_sf, value_1qb, 0) DESC
+            LIMIT 650
+            """,
+            params,
+        ) as cur:
+            player_rows = await cur.fetchall()
+
+    buckets = {
+        "win_now_buys": [],
+        "rebuild_buys": [],
+        "sell_for_future": [],
+        "watch": [],
+    }
+    included = 0
+
+    for row in player_rows:
+        player = {
+            "sleeper_id": row[0],
+            "name": row[1],
+            "position": row[2],
+            "team": row[3],
+            "age": row[4],
+            "value_sf": row[5] or 0,
+            "value_1qb": row[6] or 0,
+            "trend_30d": row[7] or 0,
+            "injury_status": row[8],
+            "updated_at": row[9],
+        }
+        player = enrich_player(player, league_id)
+        owned = ownership.get(str(player["sleeper_id"]), {})
+        dynasty_value = round(player_value(player))
+        redraft_value = redraft_proxy_value(player)
+        gap = redraft_value - dynasty_value
+        category = arbitrage_category(
+            dynasty_value=dynasty_value,
+            redraft_value=redraft_value,
+            stage=player.get("career_stage", "unknown"),
+            is_mine=owned.get("is_mine", False),
+        )
+        if selected_strategy != "all" and category != selected_strategy:
+            continue
+
+        payload = {
+            "sleeper_id": player["sleeper_id"],
+            "name": player["name"],
+            "position": player["position"],
+            "team": player["team"],
+            "age": player["age"],
+            "career_stage": player.get("career_stage", "unknown"),
+            "dynasty_value": dynasty_value,
+            "redraft_value": redraft_value,
+            "value_gap": gap,
+            "absolute_gap": abs(gap),
+            "trend_30d": player.get("trend_30d", 0),
+            "injury_status": player.get("injury_status"),
+            "roster_id": owned.get("roster_id"),
+            "owner_name": owned.get("owner_name"),
+            "is_mine": owned.get("is_mine", False),
+            "availability": "rostered" if player["sleeper_id"] in rostered_ids else "available",
+            "category": category,
+            "explanation": "",
+            "data_confidence": player.get("data_confidence"),
+        }
+        payload["explanation"] = arbitrage_explanation(payload, category, gap)
+        buckets[category].append(payload)
+        included += 1
+
+    for category, players in buckets.items():
+        if category in ("win_now_buys", "sell_for_future"):
+            players.sort(key=lambda item: (item["value_gap"], item["redraft_value"]), reverse=True)
+        elif category == "rebuild_buys":
+            players.sort(key=lambda item: (item["absolute_gap"], item["dynasty_value"]), reverse=True)
+        else:
+            players.sort(key=lambda item: (item["absolute_gap"], item["dynasty_value"]), reverse=True)
+        buckets[category] = players[:per_bucket_limit]
+
+    return {
+        "league_id": league_id,
+        "league_name": league["name"],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "filters": {
+            "position": selected_position or "ALL",
+            "strategy": selected_strategy,
+            "limit": per_bucket_limit,
+        },
+        "method": (
+            "Dynasty value uses league-adjusted FantasyCalc values. Redraft value is a current-season proxy "
+            "derived from value, age, career stage, 30-day trend, position, and injury status."
+        ),
+        "counts": {category: len(players) for category, players in buckets.items()},
+        "total_candidates": included,
+        "categories": buckets,
+    }
 
 
 @router.post("/trade/evaluate")
