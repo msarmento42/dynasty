@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import AgeCurveChart from '../components/AgeCurveChart';
 import ValueTrendChart from '../components/ValueTrendChart';
 
 const POSITION_COLORS = {
@@ -179,6 +180,8 @@ const ComparablePlayersSkeleton = () => (
 export default function PlayerProfile() {
   const { playerId } = useParams();
   const [player, setPlayer] = useState(null);
+  const [ageProjection, setAgeProjection] = useState(null);
+  const [ageProjectionError, setAgeProjectionError] = useState('');
   const [valueTrend, setValueTrend] = useState(null);
   const [valueTrendError, setValueTrendError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -188,6 +191,8 @@ export default function PlayerProfile() {
     if (!playerId) return;
     setLoading(true);
     setError('');
+    setAgeProjection(null);
+    setAgeProjectionError('');
     setValueTrend(null);
     setValueTrendError('');
     fetch(`/fantasy/players/${playerId}/profile`)
@@ -212,6 +217,14 @@ export default function PlayerProfile() {
       })
       .then((data) => setValueTrend(data))
       .catch((err) => setValueTrendError(err.message));
+
+    fetch(`/fantasy/players/${playerId}/age-curve-projection`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Age curve projection unavailable (${res.status})`);
+        return res.json();
+      })
+      .then((data) => setAgeProjection(data))
+      .catch((err) => setAgeProjectionError(err.message));
   }, [playerId]);
 
   const positionColor = player ? (POSITION_COLORS[player.position] || '#475569') : '#475569';
@@ -378,6 +391,11 @@ export default function PlayerProfile() {
             />
             {valueTrendError && (
               <p style={{ color: '#b42318', margin: '-8px 0 0' }}>{valueTrendError}</p>
+            )}
+
+            <AgeCurveChart projection={ageProjection} />
+            {ageProjectionError && (
+              <p style={{ color: '#b42318', margin: '-8px 0 0' }}>{ageProjectionError}</p>
             )}
 
             {/* Recent Stats */}

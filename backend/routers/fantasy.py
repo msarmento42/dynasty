@@ -26,6 +26,7 @@ from backend.services.fantasy_engine import (  # noqa: E402
     enrich_player,
     pick_value,
     player_value_trend,
+    project_age_curve_values,
     trade_positional_impact,
 )
 from backend.services.recommendations import generate_football_recommendations  # noqa: E402
@@ -1276,6 +1277,47 @@ async def get_player_value_trend(player_id: str, response: Response):
         "team": player_row[3],
         "current_value": player_row[4] or 0,
         **trend,
+    }
+
+
+@router.get("/players/{player_id}/age-curve-projection")
+async def get_player_age_curve_projection(player_id: str, response: Response):
+    """Return 1/3/5-year dynasty value projections from positional age curves."""
+    response.headers["Cache-Control"] = PLAYER_VALUE_CACHE_CONTROL
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT sleeper_id, name, position, team, age, value_sf, value_1qb "
+            "FROM players WHERE sleeper_id = ?",
+            (player_id,),
+        ) as cur:
+            row = await cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Player {player_id} not found.")
+
+    league_id = next(iter(LEAGUE_CONFIG), None)
+    value_col = (
+        "value_sf"
+        if league_id and LEAGUE_CONFIG.get(league_id, {}).get("base_format") == "sf"
+        else "value_1qb"
+    )
+    current_value = row[5] if value_col == "value_sf" else row[6]
+    projection = project_age_curve_values(
+        {
+            "sleeper_id": row[0],
+            "name": row[1],
+            "position": row[2],
+            "team": row[3],
+            "age": row[4],
+        },
+        current_value or 0,
+    )
+    return {
+        "sleeper_id": row[0],
+        "name": row[1],
+        "team": row[3],
+        "value_basis": value_col,
+        **projection,
     }
 
 

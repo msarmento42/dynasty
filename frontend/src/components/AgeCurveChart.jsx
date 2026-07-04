@@ -4,6 +4,7 @@ const MAX_AGE = 36;
 const WIDTH = 760;
 const HEIGHT = 300;
 const PADDING = { top: 28, right: 24, bottom: 42, left: 54 };
+const PROJECTION_HEIGHT = 260;
 
 const STAGE_COLORS = {
   rising: '#16a34a',
@@ -55,7 +56,176 @@ function valueShare(players) {
   return Math.round((primeOrRisingValue / totalValue) * 100);
 }
 
-export default function AgeCurveChart({ players = [] }) {
+function formatValue(value) {
+  return Math.round(Number(value || 0)).toLocaleString();
+}
+
+function projectionPointToX(index, count) {
+  const plotWidth = WIDTH - PADDING.left - PADDING.right;
+  if (count <= 1) {
+    return PADDING.left + plotWidth / 2;
+  }
+  return PADDING.left + (index / (count - 1)) * plotWidth;
+}
+
+function projectionPointToY(value, minValue, maxValue) {
+  const plotHeight = PROJECTION_HEIGHT - PADDING.top - PADDING.bottom;
+  if (maxValue <= minValue) {
+    return PADDING.top + plotHeight / 2;
+  }
+  return PADDING.top + ((maxValue - value) / (maxValue - minValue)) * plotHeight;
+}
+
+function ProjectionChart({ projection }) {
+  const projectionRows = Array.isArray(projection?.projections) ? projection.projections : [];
+  const points = [
+    {
+      label: 'Now',
+      age: projection?.current_age,
+      year: 0,
+      value: Number(projection?.current_value || 0),
+    },
+    ...projectionRows.map((item) => ({
+      label: `+${item.year}y`,
+      age: item.age,
+      year: item.year,
+      value: Number(item.projected_value || 0),
+    })),
+  ].filter((point) => Number.isFinite(point.value));
+
+  if (!projection || points.length < 2) {
+    return (
+      <section
+        style={{
+          background: '#ffffff',
+          border: '1px solid #d9dee7',
+          borderRadius: 8,
+          padding: 18,
+        }}
+      >
+        <h3 style={{ margin: 0 }}>Age curve projection</h3>
+        <p style={{ color: '#667085', margin: '8px 0 0' }}>
+          Need a current player value before projections can render.
+        </p>
+      </section>
+    );
+  }
+
+  const rawValues = points.map((point) => point.value);
+  const low = Math.min(...rawValues);
+  const high = Math.max(...rawValues);
+  const rangePadding = Math.max(150, (high - low) * 0.18);
+  const minValue = Math.max(0, low - rangePadding);
+  const maxValue = high + rangePadding;
+  const svgPoints = points.map((point, index) => ({
+    ...point,
+    x: projectionPointToX(index, points.length),
+    y: projectionPointToY(point.value, minValue, maxValue),
+  }));
+  const currentPoint = svgPoints[0];
+  const projectedPolyline = svgPoints.map((point) => `${point.x},${point.y}`).join(' ');
+  const lastPoint = svgPoints[svgPoints.length - 1];
+  const totalDelta = lastPoint.value - currentPoint.value;
+  const deltaColor = totalDelta >= 0 ? '#15803d' : '#b42318';
+
+  return (
+    <section
+      style={{
+        background: '#ffffff',
+        border: '1px solid #d9dee7',
+        borderRadius: 8,
+        padding: 18,
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <h3 style={{ margin: 0 }}>Age curve projection</h3>
+          <p style={{ color: '#667085', margin: '6px 0 0', fontSize: 13 }}>
+            {projection.position || 'Player'} peak age {projection.peak_age}; current age {projection.current_age || 'N/A'}
+          </p>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ color: '#667085', fontSize: 13 }}>5-year delta</div>
+          <strong style={{ color: deltaColor }}>
+            {totalDelta >= 0 ? '+' : ''}{formatValue(totalDelta)}
+          </strong>
+        </div>
+      </div>
+
+      <div style={{ overflowX: 'auto', marginTop: 14 }}>
+        <svg
+          aria-label="Projected dynasty value by age curve"
+          role="img"
+          viewBox={`0 0 ${WIDTH} ${PROJECTION_HEIGHT}`}
+          style={{ background: '#ffffff', minWidth: 680, width: '100%' }}
+        >
+          <line
+            x1={PADDING.left}
+            x2={WIDTH - PADDING.right}
+            y1={PADDING.top}
+            y2={PADDING.top}
+            stroke="#eef2f7"
+          />
+          <line
+            x1={PADDING.left}
+            x2={WIDTH - PADDING.right}
+            y1={PROJECTION_HEIGHT - PADDING.bottom}
+            y2={PROJECTION_HEIGHT - PADDING.bottom}
+            stroke="#d9dee7"
+          />
+          <text x="12" y={PADDING.top + 4} fill="#667085" fontSize="12">
+            {formatValue(maxValue)}
+          </text>
+          <text x="12" y={PROJECTION_HEIGHT - PADDING.bottom + 4} fill="#667085" fontSize="12">
+            {formatValue(minValue)}
+          </text>
+
+          <polyline
+            fill="none"
+            points={projectedPolyline}
+            stroke="#1d4ed8"
+            strokeDasharray="7 7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="3"
+          />
+
+          {svgPoints.map((point, index) => (
+            <g key={`${point.label}-${point.value}`}>
+              <line
+                x1={point.x}
+                x2={point.x}
+                y1={PADDING.top}
+                y2={PROJECTION_HEIGHT - PADDING.bottom + 8}
+                stroke="#f0f2f5"
+              />
+              <circle
+                cx={point.x}
+                cy={point.y}
+                r={index === 0 ? 6 : 5}
+                fill={index === 0 ? '#111827' : '#2563eb'}
+                stroke="#ffffff"
+                strokeWidth="2"
+              />
+              <text x={point.x} y={point.y - 12} fill="#344054" fontSize="12" fontWeight="700" textAnchor="middle">
+                {formatValue(point.value)}
+              </text>
+              <text x={point.x} y={PROJECTION_HEIGHT - 16} fill="#667085" fontSize="12" textAnchor="middle">
+                {point.label}{point.age ? ` / age ${point.age}` : ''}
+              </text>
+            </g>
+          ))}
+        </svg>
+      </div>
+    </section>
+  );
+}
+
+export default function AgeCurveChart({ players = [], projection = null }) {
+  if (projection) {
+    return <ProjectionChart projection={projection} />;
+  }
+
   const visiblePlayers = players.filter(isVisiblePlayer);
   const primeOrRisingPct = valueShare(players);
   const ages = [20, 24, 28, 32, 36];
