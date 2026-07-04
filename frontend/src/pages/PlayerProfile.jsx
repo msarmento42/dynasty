@@ -36,6 +36,11 @@ function StatRow({ label, value }) {
   );
 }
 
+function formatPercent(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return 'N/A';
+  return `${Math.round(Number(value) * 100)}%`;
+}
+
 // --- Skeleton Components Start ---
 const Skeleton = ({ width, height, borderRadius = 4, style = {} }) => (
   <div
@@ -184,6 +189,8 @@ export default function PlayerProfile() {
   const [ageProjectionError, setAgeProjectionError] = useState('');
   const [valueTrend, setValueTrend] = useState(null);
   const [valueTrendError, setValueTrendError] = useState('');
+  const [usageTrend, setUsageTrend] = useState(null);
+  const [usageTrendError, setUsageTrendError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -195,6 +202,8 @@ export default function PlayerProfile() {
     setAgeProjectionError('');
     setValueTrend(null);
     setValueTrendError('');
+    setUsageTrend(null);
+    setUsageTrendError('');
     fetch(`/fantasy/players/${playerId}/profile`)
       .then((res) => {
         if (!res.ok) throw new Error(`Player not found (${res.status})`);
@@ -203,6 +212,7 @@ export default function PlayerProfile() {
       .then((data) => {
         setPlayer(data);
         setValueTrend(data.value_trend || null);
+        setUsageTrend(data.usage_trend || null);
         setLoading(false);
       })
       .catch((err) => {
@@ -217,6 +227,14 @@ export default function PlayerProfile() {
       })
       .then((data) => setValueTrend(data))
       .catch((err) => setValueTrendError(err.message));
+
+    fetch(`/fantasy/players/${playerId}/usage`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Usage trend unavailable (${res.status})`);
+        return res.json();
+      })
+      .then((data) => setUsageTrend(data))
+      .catch((err) => setUsageTrendError(err.message));
 
     fetch(`/fantasy/players/${playerId}/age-curve-projection`)
       .then((res) => {
@@ -397,6 +415,99 @@ export default function PlayerProfile() {
             {ageProjectionError && (
               <p style={{ color: '#b42318', margin: '-8px 0 0' }}>{ageProjectionError}</p>
             )}
+
+            <section
+              style={{
+                background: '#ffffff',
+                border: '1px solid #d9dee7',
+                borderRadius: 10,
+                padding: 20,
+              }}
+            >
+              <div
+                style={{
+                  alignItems: 'flex-start',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 16,
+                  marginBottom: 14,
+                }}
+              >
+                <div>
+                  <h2 style={{ margin: 0 }}>Usage Trend</h2>
+                  <p style={{ color: '#667085', margin: '4px 0 0' }}>
+                    Weekly target share and snap rate from Sleeper stats.
+                  </p>
+                </div>
+                <span
+                  style={{
+                    background: usageTrend?.rising_target_share ? '#dcfce7' : '#f2f4f7',
+                    borderRadius: 999,
+                    color: usageTrend?.rising_target_share ? '#166534' : '#475467',
+                    fontSize: 12,
+                    fontWeight: 800,
+                    padding: '5px 10px',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {usageTrend?.rising_target_share ? 'Rising target share' : 'Stable target share'}
+                </span>
+              </div>
+              {usageTrendError && <p style={{ color: '#b42318' }}>{usageTrendError}</p>}
+              {usageTrend?.history?.length > 0 ? (
+                <>
+                  <div
+                    style={{
+                      display: 'grid',
+                      gap: 12,
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                      marginBottom: 14,
+                    }}
+                  >
+                    <StatRow label="Latest target share" value={formatPercent(usageTrend.latest?.target_share)} />
+                    <StatRow label="Latest snap rate" value={formatPercent(usageTrend.latest?.snap_pct)} />
+                    <StatRow
+                      label="4-week target avg"
+                      value={formatPercent(usageTrend.rolling_4_week_avg_target_share)}
+                    />
+                    <StatRow
+                      label="Target share delta"
+                      value={usageTrend.rolling_delta != null ? formatPercent(usageTrend.rolling_delta) : 'N/A'}
+                    />
+                  </div>
+                  <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                    <thead>
+                      <tr style={{ background: '#f8fafc', borderBottom: '1px solid #d9dee7' }}>
+                        <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 700 }}>Week</th>
+                        <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 700 }}>Team</th>
+                        <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 700 }}>Targets</th>
+                        <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 700 }}>Target Share</th>
+                        <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 700 }}>Snap Rate</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {usageTrend.history.map((week) => (
+                        <tr key={`${week.season}-${week.week}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                          <td style={{ padding: '10px 12px', color: '#475467' }}>
+                            {week.season} W{week.week}
+                          </td>
+                          <td style={{ padding: '10px 12px' }}>{week.team || 'N/A'}</td>
+                          <td style={{ padding: '10px 12px' }}>
+                            {week.targets != null ? Number(week.targets).toLocaleString() : 'N/A'}
+                          </td>
+                          <td style={{ padding: '10px 12px' }}>{formatPercent(week.target_share)}</td>
+                          <td style={{ padding: '10px 12px' }}>{formatPercent(week.snap_pct)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              ) : (
+                <p style={{ color: '#667085', margin: 0 }}>
+                  No weekly usage stats have been synced for this player yet.
+                </p>
+              )}
+            </section>
 
             {/* Recent Stats */}
             {player.recent_stats && player.recent_stats.length > 0 && (
