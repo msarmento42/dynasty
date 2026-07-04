@@ -179,6 +179,70 @@ async def snapshot_roster_values(db: aiosqlite.Connection, league_id: str, synce
     return snapshot_count
 
 
+async def ensure_player_usage_table(db: aiosqlite.Connection) -> None:
+    """Create the additive weekly usage table when a local DB predates this feature."""
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS player_usage_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sleeper_id TEXT NOT NULL,
+            season INTEGER NOT NULL,
+            week INTEGER NOT NULL,
+            team TEXT,
+            targets REAL,
+            target_share REAL,
+            snap_pct REAL,
+            offensive_snaps REAL,
+            synced_at TEXT NOT NULL,
+            UNIQUE(sleeper_id, season, week)
+        )
+        """
+    )
+    await db.commit()
+
+
+async def sync_player_usage(db: aiosqlite.Connection, synced_at: str) -> int:
+    """Persist recent target-share and snap-count usage from Sleeper stats."""
+    await ensure_player_usage_table(db)
+    try:
+        usage_rows = await sleeper.fetch_recent_player_usage(weeks_back=4)
+    except Exception as exc:
+        print(f"  Sleeper usage stats unavailable: {exc}")
+        return 0
+
+    count = 0
+    for row in usage_rows:
+        await db.execute(
+            """
+            INSERT INTO player_usage_snapshots
+                (sleeper_id, season, week, team, targets, target_share, snap_pct,
+                 offensive_snaps, synced_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(sleeper_id, season, week) DO UPDATE SET
+                team=excluded.team,
+                targets=excluded.targets,
+                target_share=excluded.target_share,
+                snap_pct=excluded.snap_pct,
+                offensive_snaps=excluded.offensive_snaps,
+                synced_at=excluded.synced_at
+            """,
+            (
+                row["sleeper_id"],
+                row["season"],
+                row["week"],
+                row.get("team"),
+                row.get("targets"),
+                row.get("target_share"),
+                row.get("snap_pct"),
+                row.get("offensive_snaps"),
+                synced_at,
+            ),
+        )
+        count += 1
+    await db.commit()
+    return count
+
+
 def injury_severity(status: Optional[str]) -> str:
     normalized = (status or "").lower()
     if normalized in {"out", "ir", "injured reserve"}:
@@ -380,6 +444,10 @@ async def main() -> None:
         await upsert_1qb_values(db, onqb_players)
         print(f"  Synced {n} players")
 
+        print("  Fetching recent Sleeper usage stats...")
+        usage_count = await sync_player_usage(db, now)
+        print(f"  Synced {usage_count} player usage rows")
+
         total_new_trades = 0
         snapshot_ids = []
         for league_id, config in LEAGUE_CONFIG.items():
@@ -407,7 +475,7 @@ async def main() -> None:
                 "success",
                 (
                     f"{n} players synced, {len(LEAGUE_CONFIG)} leagues, "
-                    f"{total_new_trades} new trades, {alert_count} alerts, "
+                    f"{usage_count} usage rows, {total_new_trades} new trades, {alert_count} alerts, "
                     f"snapshots={snapshot_ids}"
                 ),
                 sync_log_id,

@@ -35,6 +35,12 @@ LEAGUES = {
 _ALL_PLAYERS_CACHE: dict[str, Any] | None = None
 
 
+async def fetch_nfl_state() -> dict[str, Any]:
+    """Fetch Sleeper's current NFL season/week state."""
+    data = await _get_json("/state/nfl")
+    return data if isinstance(data, dict) else {}
+
+
 async def _get_json(path: str, params: dict[str, Any] | None = None) -> Any:
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.get(f"{BASE}{path}", params=params)
@@ -111,3 +117,89 @@ async def fetch_league_info(league_id: str) -> dict[str, Any]:
     """Fetch full league info from Sleeper (includes scoring_settings + roster_positions)."""
     data = await _get_json(f"/league/{league_id}")
     return data if isinstance(data, dict) else {}
+
+
+def _float_stat(stats: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        value = stats.get(key)
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _normalize_usage_stats(season: int, week: int, raw_stats: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_stats, dict):
+        return []
+
+    team_targets: dict[str, float] = {}
+    for stats in raw_stats.values():
+        if not isinstance(stats, dict):
+            continue
+        team = stats.get("team")
+        targets = _float_stat(stats, "rec_tgt", "targets")
+        if team and targets is not None:
+            team_targets[str(team)] = team_targets.get(str(team), 0.0) + targets
+
+    usage_rows = []
+    for sleeper_id, stats in raw_stats.items():
+        if not isinstance(stats, dict):
+            continue
+
+        team = stats.get("team")
+        targets = _float_stat(stats, "rec_tgt", "targets")
+        target_share = _float_stat(stats, "target_share", "tgt_share")
+        if target_share is None and team and targets is not None:
+            total_targets = team_targets.get(str(team), 0.0)
+            if total_targets > 0:
+                target_share = targets / total_targets
+
+        snap_pct = _float_stat(stats, "off_snp_pct", "snap_pct", "tm_off_snp_pct")
+        if snap_pct is not None and snap_pct > 1:
+            snap_pct = snap_pct / 100
+
+        offensive_snaps = _float_stat(stats, "off_snp", "offensive_snaps", "snaps")
+        if target_share is None and snap_pct is None and targets is None and offensive_snaps is None:
+            continue
+
+        usage_rows.append({
+            "sleeper_id": str(sleeper_id),
+            "season": int(season),
+            "week": int(week),
+            "team": str(team) if team else None,
+            "targets": targets,
+            "target_share": round(target_share, 4) if target_share is not None else None,
+            "snap_pct": round(snap_pct, 4) if snap_pct is not None else None,
+            "offensive_snaps": offensive_snaps,
+        })
+
+    return usage_rows
+
+
+async def fetch_weekly_player_usage(season: int, week: int, season_type: str = "regular") -> list[dict[str, Any]]:
+    """Fetch weekly target share and snap usage from Sleeper stats."""
+    data = await _get_json(f"/stats/nfl/{season_type}/{season}/{week}")
+    return _normalize_usage_stats(season, week, data)
+
+
+async def fetch_recent_player_usage(weeks_back: int = 4) -> list[dict[str, Any]]:
+    """Fetch recent weekly usage rows for the current Sleeper NFL season."""
+    state = await fetch_nfl_state()
+    season = int(state.get("season") or datetime_now_year())
+    current_week = int(state.get("week") or 1)
+    season_type = str(state.get("season_type") or "regular")
+
+    start_week = max(1, current_week - max(weeks_back, 1) + 1)
+    rows: list[dict[str, Any]] = []
+    for week in range(start_week, current_week + 1):
+        rows.extend(await fetch_weekly_player_usage(season, week, season_type=season_type))
+    return rows
+
+
+def datetime_now_year() -> int:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).year

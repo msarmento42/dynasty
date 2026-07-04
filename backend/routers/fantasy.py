@@ -118,6 +118,99 @@ async def get_players_for_ids(
     return players
 
 
+async def player_usage_table_exists(db: aiosqlite.Connection) -> bool:
+    async with db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='player_usage_snapshots'"
+    ) as cur:
+        return await cur.fetchone() is not None
+
+
+def usage_trend_payload(rows: list[tuple]) -> dict:
+    history = [
+        {
+            "season": row[0],
+            "week": row[1],
+            "team": row[2],
+            "targets": row[3],
+            "target_share": row[4],
+            "snap_pct": row[5],
+            "offensive_snaps": row[6],
+            "synced_at": row[7],
+        }
+        for row in rows
+    ]
+    target_points = [point for point in history if point["target_share"] is not None]
+    latest = target_points[-1] if target_points else None
+    previous_points = target_points[-5:-1] if len(target_points) > 1 else []
+    previous_avg = (
+        sum(float(point["target_share"]) for point in previous_points) / len(previous_points)
+        if previous_points else None
+    )
+    latest_target_share = float(latest["target_share"]) if latest else None
+    rolling_delta = (
+        round(latest_target_share - previous_avg, 4)
+        if latest_target_share is not None and previous_avg is not None
+        else None
+    )
+
+    return {
+        "history": history,
+        "latest": latest,
+        "rolling_4_week_avg_target_share": (
+            round(sum(float(point["target_share"]) for point in target_points[-4:]) / len(target_points[-4:]), 4)
+            if target_points else None
+        ),
+        "rolling_delta": rolling_delta,
+        "rising_target_share": rolling_delta is not None and rolling_delta >= 0.02,
+    }
+
+
+async def get_usage_for_player(db: aiosqlite.Connection, player_id: str, limit: int = 8) -> dict:
+    if not await player_usage_table_exists(db):
+        return usage_trend_payload([])
+
+    async with db.execute(
+        """
+        SELECT season, week, team, targets, target_share, snap_pct, offensive_snaps, synced_at
+        FROM player_usage_snapshots
+        WHERE sleeper_id=?
+        ORDER BY season DESC, week DESC
+        LIMIT ?
+        """,
+        (player_id, limit),
+    ) as cur:
+        rows = await cur.fetchall()
+    return usage_trend_payload(list(reversed(rows)))
+
+
+async def attach_usage_summaries(db: aiosqlite.Connection, players: list[dict]) -> None:
+    if not players or not await player_usage_table_exists(db):
+        return
+
+    player_ids = [str(player["sleeper_id"]) for player in players if player.get("sleeper_id")]
+    if not player_ids:
+        return
+    placeholders = ",".join("?" * len(player_ids))
+    async with db.execute(
+        f"""
+        SELECT sleeper_id, season, week, team, targets, target_share, snap_pct, offensive_snaps, synced_at
+        FROM player_usage_snapshots
+        WHERE sleeper_id IN ({placeholders})
+        ORDER BY sleeper_id, season DESC, week DESC
+        """,
+        player_ids,
+    ) as cur:
+        rows = await cur.fetchall()
+
+    by_player: dict[str, list[tuple]] = {}
+    for row in rows:
+        by_player.setdefault(str(row[0]), []).append(row[1:])
+
+    for player in players:
+        usage_rows = list(reversed(by_player.get(str(player.get("sleeper_id")), [])[:4]))
+        player["usage_trend"] = usage_trend_payload(usage_rows)
+
+
 def player_value(player: dict) -> float:
     return float(player.get("adjusted_value") or player.get("value_sf") or player.get("value_1qb") or 0)
 
@@ -451,6 +544,7 @@ async def get_my_roster(league_id: str):
 
         player_ids = json.loads(row[0] or "[]")
         players = await get_players_for_ids(db, player_ids, league_id)
+        await attach_usage_summaries(db, players)
 
     players.sort(key=lambda p: p.get("adjusted_value", 0), reverse=True)
     total = sum(p.get("adjusted_value", 0) for p in players)
@@ -1197,6 +1291,7 @@ async def get_player_profile(player_id: str, response: Response):
             {"snapshot_date": trend_row[0], "value_sf": trend_row[1]}
             for trend_row in trend_rows
         ])
+        usage_trend = await get_usage_for_player(db, player_id)
 
         # Comparable players: same position, similar value (within ±15%)
         value_target = player_value or 1
@@ -1240,8 +1335,33 @@ async def get_player_profile(player_id: str, response: Response):
         "positional_rank": positional_rank,
         "breakout_score": breakout_score,
         "value_trend": value_trend,
+        "usage_trend": usage_trend,
         "recent_stats": recent_stats,
         "comparable_players": comparable_players,
+    }
+
+
+@router.get("/players/{player_id}/usage")
+async def get_player_usage(player_id: str, response: Response):
+    """Return weekly target-share/snap-count history and trend for a player."""
+    response.headers["Cache-Control"] = PLAYER_VALUE_CACHE_CONTROL
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT sleeper_id, name, position, team FROM players WHERE sleeper_id = ?",
+            (player_id,),
+        ) as cur:
+            player_row = await cur.fetchone()
+        if not player_row:
+            raise HTTPException(status_code=404, detail=f"Player {player_id} not found.")
+
+        usage = await get_usage_for_player(db, player_id)
+
+    return {
+        "sleeper_id": player_row[0],
+        "name": player_row[1],
+        "position": player_row[2],
+        "team": player_row[3],
+        **usage,
     }
 
 
