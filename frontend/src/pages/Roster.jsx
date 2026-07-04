@@ -29,6 +29,7 @@ function formatCacheAge(cacheAgeSeconds) {
 const localStorageKeys = {
   globalThreshold: 'globalValueAlertThreshold',
   playerThresholds: 'playerValueAlertThresholds',
+  viewPresets: 'dynastyViewPresets',
 };
 
 // Function to safely parse JSON from localStorage
@@ -64,6 +65,8 @@ export default function Roster() {
   const [toast, setToast] = useState('');
   const [sortColumn, setSortColumn] = useState('adjusted_value'); // Default sort by value
   const [sortDirection, setSortDirection] = useState('desc'); // Default descending
+  const [viewPresets, setViewPresets] = useState(() => getLocalStorageItem(localStorageKeys.viewPresets, []));
+  const [selectedPresetName, setSelectedPresetName] = useState('');
 
   // New state for alert thresholds
   const [globalThreshold, setGlobalThreshold] = useState(() => getLocalStorageItem(localStorageKeys.globalThreshold, 5)); // Default 5%
@@ -83,6 +86,10 @@ export default function Roster() {
   useEffect(() => {
     setLocalStorageItem(localStorageKeys.playerThresholds, playerThresholds);
   }, [playerThresholds]);
+
+  useEffect(() => {
+    setLocalStorageItem(localStorageKeys.viewPresets, viewPresets);
+  }, [viewPresets]);
 
   const loadCacheStatus = useCallback(async () => {
     const response = await fetch('/fantasy/cache-status', { cache: 'no-store' });
@@ -201,6 +208,56 @@ export default function Roster() {
       setSortDirection('asc'); // Default to ascending when changing column
     }
   }, [sortColumn]);
+
+  const rosterPresets = useMemo(
+    () => viewPresets.filter((preset) => preset.page === 'roster'),
+    [viewPresets],
+  );
+
+  const handleSavePreset = useCallback(() => {
+    const name = window.prompt('Preset name');
+    const trimmedName = name?.trim();
+    if (!trimmedName) return;
+
+    const nextPreset = {
+      page: 'roster',
+      name: trimmedName,
+      filters: {},
+      sort: { column: sortColumn, direction: sortDirection },
+    };
+
+    setViewPresets((prev) => [
+      ...prev.filter((preset) => !(preset.page === 'roster' && preset.name === trimmedName)),
+      nextPreset,
+    ]);
+    setSelectedPresetName(trimmedName);
+    showToast('Preset saved');
+  }, [showToast, sortColumn, sortDirection]);
+
+  const applyPreset = useCallback((presetName) => {
+    if (!presetName) {
+      setSelectedPresetName('');
+      return;
+    }
+
+    const preset = rosterPresets.find((item) => item.name === presetName);
+    if (!preset) return;
+
+    setSelectedPresetName(preset.name);
+    setSortColumn(preset.sort?.column || 'adjusted_value');
+    setSortDirection(preset.sort?.direction || 'desc');
+    showToast('Preset applied');
+  }, [rosterPresets, showToast]);
+
+  const deletePreset = useCallback(() => {
+    if (!selectedPresetName) return;
+
+    setViewPresets((prev) => prev.filter((preset) => (
+      !(preset.page === 'roster' && preset.name === selectedPresetName)
+    )));
+    setSelectedPresetName('');
+    showToast('Preset deleted');
+  }, [selectedPresetName, showToast]);
 
   const sortedPlayers = useMemo(() => {
     if (!rosterData?.players) return [];
@@ -357,6 +414,56 @@ export default function Roster() {
                     filename={`roster_${selectedLeague}.csv`}
                   />
                 )}
+                <button
+                  onClick={handleSavePreset}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: 8,
+                    border: '1px solid #d0d5dd',
+                    background: '#ffffff',
+                    cursor: 'pointer',
+                    fontSize: 14,
+                    fontWeight: 500,
+                    color: '#344054',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Save current view
+                </button>
+                <select
+                  value={selectedPresetName}
+                  onChange={(event) => applyPreset(event.target.value)}
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: 8,
+                    border: '1px solid #d0d5dd',
+                    background: '#ffffff',
+                    color: '#344054',
+                    fontSize: 14,
+                  }}
+                >
+                  <option value="">Saved views</option>
+                  {rosterPresets.map((preset) => (
+                    <option key={preset.name} value={preset.name}>{preset.name}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={deletePreset}
+                  disabled={!selectedPresetName}
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: 8,
+                    border: '1px solid #d0d5dd',
+                    background: selectedPresetName ? '#ffffff' : '#eef2f7',
+                    cursor: selectedPresetName ? 'pointer' : 'not-allowed',
+                    fontSize: 14,
+                    fontWeight: 500,
+                    color: selectedPresetName ? '#344054' : '#98a2b3',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Delete view
+                </button>
               </>
             )}
             {toast && (

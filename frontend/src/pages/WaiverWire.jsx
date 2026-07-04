@@ -1,5 +1,25 @@
-import { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
+
+const PRESETS_KEY = 'dynastyViewPresets';
+
+const getLocalStorageItem = (key, defaultValue) => {
+  try {
+    const item = window.localStorage.getItem(key);
+    return item ? JSON.parse(item) : defaultValue;
+  } catch (error) {
+    console.error(`Error parsing localStorage item "${key}":`, error);
+    return defaultValue;
+  }
+};
+
+const setLocalStorageItem = (key, value) => {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.error(`Error setting localStorage item "${key}":`, error);
+  }
+};
 
 const POS_COLORS = {
   QB: { bg: '#fef3c7', text: '#92400e' },
@@ -106,6 +126,12 @@ export default function WaiverWire() {
   const [targets, setTargets] = useState(new Set());
   const [sortColumn, setSortColumn] = useState('value_sf'); // Default sort by value
   const [sortDirection, setSortDirection] = useState('desc'); // Default descending
+  const [viewPresets, setViewPresets] = useState(() => getLocalStorageItem(PRESETS_KEY, []));
+  const [selectedPresetName, setSelectedPresetName] = useState('');
+
+  useEffect(() => {
+    setLocalStorageItem(PRESETS_KEY, viewPresets);
+  }, [viewPresets]);
 
   const load = useCallback(async (id) => {
     if (!id) return;
@@ -145,6 +171,54 @@ export default function WaiverWire() {
       setSortDirection('desc'); // Default to descending when changing column
     }
   }, [sortColumn, sortDirection]);
+
+  const waiverPresets = useMemo(
+    () => viewPresets.filter((preset) => preset.page === 'waiver-wire'),
+    [viewPresets],
+  );
+
+  const handleSavePreset = useCallback(() => {
+    const name = window.prompt('Preset name');
+    const trimmedName = name?.trim();
+    if (!trimmedName) return;
+
+    const nextPreset = {
+      page: 'waiver-wire',
+      name: trimmedName,
+      filters: { position: activePos },
+      sort: { column: sortColumn, direction: sortDirection },
+    };
+
+    setViewPresets((prev) => [
+      ...prev.filter((preset) => !(preset.page === 'waiver-wire' && preset.name === trimmedName)),
+      nextPreset,
+    ]);
+    setSelectedPresetName(trimmedName);
+  }, [activePos, sortColumn, sortDirection]);
+
+  const applyPreset = useCallback((presetName) => {
+    if (!presetName) {
+      setSelectedPresetName('');
+      return;
+    }
+
+    const preset = waiverPresets.find((item) => item.name === presetName);
+    if (!preset) return;
+
+    setSelectedPresetName(preset.name);
+    setActivePos(preset.filters?.position || 'ALL');
+    setSortColumn(preset.sort?.column || 'value_sf');
+    setSortDirection(preset.sort?.direction || 'desc');
+  }, [waiverPresets]);
+
+  const deletePreset = useCallback(() => {
+    if (!selectedPresetName) return;
+
+    setViewPresets((prev) => prev.filter((preset) => (
+      !(preset.page === 'waiver-wire' && preset.name === selectedPresetName)
+    )));
+    setSelectedPresetName('');
+  }, [selectedPresetName]);
 
   const filteredPlayers = data
     ? (activePos === 'ALL'
@@ -265,6 +339,54 @@ export default function WaiverWire() {
                   {p}
                 </button>
               ))}
+            </div>
+
+            <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <button
+                onClick={handleSavePreset}
+                style={{
+                  background: '#fff',
+                  border: '1px solid #d1d5db',
+                  borderRadius: 6,
+                  color: '#374151',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                  padding: '7px 12px',
+                }}
+              >
+                Save current view
+              </button>
+              <select
+                value={selectedPresetName}
+                onChange={(event) => applyPreset(event.target.value)}
+                style={{
+                  background: '#fff',
+                  border: '1px solid #d1d5db',
+                  borderRadius: 6,
+                  color: '#374151',
+                  padding: '7px 10px',
+                }}
+              >
+                <option value="">Saved views</option>
+                {waiverPresets.map((preset) => (
+                  <option key={preset.name} value={preset.name}>{preset.name}</option>
+                ))}
+              </select>
+              <button
+                onClick={deletePreset}
+                disabled={!selectedPresetName}
+                style={{
+                  background: selectedPresetName ? '#fff' : '#f3f4f6',
+                  border: '1px solid #d1d5db',
+                  borderRadius: 6,
+                  color: selectedPresetName ? '#374151' : '#9ca3af',
+                  cursor: selectedPresetName ? 'pointer' : 'not-allowed',
+                  fontWeight: 600,
+                  padding: '7px 12px',
+                }}
+              >
+                Delete view
+              </button>
             </div>
 
             {/* Table */}
