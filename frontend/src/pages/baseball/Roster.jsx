@@ -28,6 +28,14 @@ export default function BaseballRoster() {
   const [removing, setRemoving] = useState(null);
   const [editingNotes, setEditingNotes] = useState(null);
   const [notesValue, setNotesValue] = useState('');
+  const [valueMode, setValueMode] = useState('dynasty');
+  const [editingValues, setEditingValues] = useState(null);
+  const [valueForm, setValueForm] = useState({
+    dynasty_value: '',
+    redraft_value: '',
+    redraft_rank: '',
+    value_trend: '',
+  });
   const debounceRef = useRef(null);
   const navigate = useNavigate();
 
@@ -112,7 +120,30 @@ export default function BaseballRoster() {
     }
   };
 
-  const grouped = useMemo(() => groupByPosition(players), [players]);
+  const handleSaveValues = async (mlbId) => {
+    const payload = {};
+    for (const [key, value] of Object.entries(valueForm)) {
+      if (value !== '') payload[key] = Number(value);
+    }
+    try {
+      const res = await fetch(`${API}/api/baseball/players/${mlbId}/values`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error('Failed to save values');
+      setEditingValues(null);
+      await loadRoster();
+    } catch (err) {
+      alert(`Error: ${err.message}`);
+    }
+  };
+
+  const sortedPlayers = useMemo(() => {
+    const key = valueMode === 'redraft' ? 'redraft_value' : 'dynasty_value';
+    return [...players].sort((a, b) => (Number(b[key] || 0) - Number(a[key] || 0)) || a.name.localeCompare(b.name));
+  }, [players, valueMode]);
+  const grouped = useMemo(() => groupByPosition(sortedPlayers), [sortedPlayers]);
 
   return (
     <main style={{ background: 'var(--bg-primary)', minHeight: '100vh', padding: 24 }}>
@@ -123,13 +154,34 @@ export default function BaseballRoster() {
           <div>
             <h1 style={{ margin: 0, fontSize: 24 }}>My Baseball Roster</h1>
             <p style={{ margin: '3px 0 0', color: 'var(--text-secondary)', fontSize: 13 }}>
-              Dynasty roster · {players.length} player{players.length !== 1 ? 's' : ''}
+              Dynasty roster · {players.length} player{players.length !== 1 ? 's' : ''} · sorting by {valueMode} value
             </p>
             {confidence && (
               <div style={{ marginTop: 8 }}>
                 <ConfidenceBadge confidence={confidence} />
               </div>
             )}
+          </div>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            {['dynasty', 'redraft'].map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setValueMode(mode)}
+                style={{
+                  background: valueMode === mode ? 'var(--accent)' : 'var(--bg-card)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: 7,
+                  color: valueMode === mode ? '#fff' : 'var(--text-primary)',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  fontWeight: 800,
+                  padding: '7px 10px',
+                  textTransform: 'capitalize',
+                }}
+              >
+                {mode}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -238,6 +290,21 @@ export default function BaseballRoster() {
                 onSaveNotes={handleSaveNotes}
                 onCancelNotes={() => setEditingNotes(null)}
                 onNotesChange={setNotesValue}
+                valueMode={valueMode}
+                editingValues={editingValues}
+                valueForm={valueForm}
+                onEditValues={(player) => {
+                  setEditingValues(player.mlb_id);
+                  setValueForm({
+                    dynasty_value: player.dynasty_value || '',
+                    redraft_value: player.redraft_value || '',
+                    redraft_rank: player.redraft_rank || '',
+                    value_trend: player.value_trend || '',
+                  });
+                }}
+                onSaveValues={handleSaveValues}
+                onCancelValues={() => setEditingValues(null)}
+                onValueFormChange={setValueForm}
               />
             ))}
           </div>
@@ -247,7 +314,26 @@ export default function BaseballRoster() {
   );
 }
 
-function PositionGroup({ pos, players, onRemove, removing, onNavigate, editingNotes, notesValue, onEditNotes, onSaveNotes, onCancelNotes, onNotesChange }) {
+function PositionGroup({
+  pos,
+  players,
+  onRemove,
+  removing,
+  onNavigate,
+  editingNotes,
+  notesValue,
+  onEditNotes,
+  onSaveNotes,
+  onCancelNotes,
+  onNotesChange,
+  valueMode,
+  editingValues,
+  valueForm,
+  onEditValues,
+  onSaveValues,
+  onCancelValues,
+  onValueFormChange,
+}) {
   return (
     <div style={{
       background: 'var(--bg-card)',
@@ -288,7 +374,27 @@ function PositionGroup({ pos, players, onRemove, removing, onNavigate, editingNo
               <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 2 }}>
                 {[p.team, p.age ? `Age ${p.age}` : null].filter(Boolean).join(' · ')}
               </div>
+              <div style={{ display: 'flex', gap: 10, marginTop: 4, color: 'var(--text-secondary)', fontSize: 12 }}>
+                <span>Dynasty: <strong>{p.dynasty_value ? Number(p.dynasty_value).toLocaleString() : 'Missing'}</strong></span>
+                <span>Redraft: <strong>{p.redraft_value ? Number(p.redraft_value).toLocaleString() : 'Missing'}</strong></span>
+                {p.is_prospect && <span style={{ color: '#92400e', fontWeight: 700 }}>Prospect</span>}
+                {!p.is_prospect && <span style={{ color: '#166534', fontWeight: 700 }}>MLB contributor</span>}
+              </div>
             </div>
+            <button
+              onClick={() => onEditValues(p)}
+              style={{
+                background: (valueMode === 'dynasty' ? p.dynasty_value : p.redraft_value) ? 'none' : '#fff7ed',
+                border: '1px solid var(--border-color)',
+                borderRadius: 5,
+                padding: '3px 8px',
+                fontSize: 11,
+                cursor: 'pointer',
+                color: (valueMode === 'dynasty' ? p.dynasty_value : p.redraft_value) ? 'var(--text-secondary)' : '#9a3412',
+              }}
+            >
+              Values
+            </button>
             <button
               onClick={() => onEditNotes(p.mlb_id, p.notes)}
               style={{
@@ -365,6 +471,53 @@ function PositionGroup({ pos, players, onRemove, removing, onNavigate, editingNo
                     cursor: 'pointer',
                     color: 'var(--text-secondary)',
                   }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+          {editingValues === p.mlb_id && (
+            <div style={{ padding: '10px 16px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-color)' }}>
+              <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))' }}>
+                {[
+                  ['dynasty_value', 'Dynasty value'],
+                  ['redraft_value', 'Redraft value'],
+                  ['redraft_rank', 'Redraft rank'],
+                  ['value_trend', 'Trend'],
+                ].map(([key, label]) => (
+                  <label key={key} style={{ color: 'var(--text-secondary)', fontSize: 12, fontWeight: 700 }}>
+                    {label}
+                    <input
+                      type="number"
+                      value={valueForm[key]}
+                      onChange={(event) => onValueFormChange({ ...valueForm, [key]: event.target.value })}
+                      style={{
+                        background: 'var(--bg-card)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: 6,
+                        boxSizing: 'border-box',
+                        color: 'var(--text-primary)',
+                        display: 'block',
+                        fontSize: 13,
+                        marginTop: 4,
+                        padding: 7,
+                        width: '100%',
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button
+                  onClick={() => onSaveValues(p.mlb_id)}
+                  style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                >
+                  Save
+                </button>
+                <button
+                  onClick={onCancelValues}
+                  style={{ background: 'none', border: '1px solid var(--border-color)', borderRadius: 6, padding: '5px 14px', fontSize: 12, cursor: 'pointer', color: 'var(--text-secondary)' }}
                 >
                   Cancel
                 </button>
