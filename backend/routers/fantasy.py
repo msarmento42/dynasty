@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -956,7 +956,11 @@ async def create_simulation_scenario(req: SimulationRequest):
 
 
 @router.get("/proposals/{league_id}")
-async def get_proposals(league_id: str):
+async def get_proposals(
+    league_id: str,
+    value_mode: str = Query("dynasty", pattern="^(dynasty|redraft)$"),
+    strategy: str = Query("balanced", pattern="^(balanced|win_now|rebuild)$"),
+):
     """Auto-generated ranked trade proposals for this league."""
     if league_id not in LEAGUE_CONFIG:
         raise HTTPException(status_code=404, detail=f"League {league_id} not found.")
@@ -964,7 +968,7 @@ async def get_proposals(league_id: str):
     async with aiosqlite.connect(DB_PATH) as db:
         trust = await data_trust.get_trust_status(db, league_id)
 
-    proposals = await generate_proposals(league_id)
+    proposals = await generate_proposals(league_id, value_mode=value_mode, strategy=strategy)
     if not trust["ok"]:
         # Proposals normally return a bare list; only wrap it when degraded so
         # the existing successful-path shape is unchanged for current consumers.

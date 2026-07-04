@@ -9,26 +9,67 @@ function sideText(side) {
   const playerText = players.length > 0
     ? players.map((player) => (typeof player === 'string' ? player : player.name || player.sleeper_id)).join(', ')
     : 'No players';
-  const pickText = picks.length > 0 ? ` + ${picks.length} pick(s)` : '';
+  const pickText = picks.length > 0
+    ? ` + ${picks.map((pick) => `${pick.year} R${pick.round}`).join(', ')}`
+    : '';
   return `${playerText}${pickText}`;
+}
+
+function playerMeta(player) {
+  return [
+    player.position,
+    player.team,
+    player.dynasty_value ? `Dyn ${Math.round(player.dynasty_value)}` : '',
+    player.redraft_value ? `Redraft ${Math.round(player.redraft_value)}` : '',
+    player.trend_30d ? `Trend ${player.trend_30d > 0 ? '+' : ''}${Math.round(player.trend_30d)}` : '',
+  ].filter(Boolean).join(' | ');
+}
+
+function SideDetail({ title, side }) {
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      <strong>{title}</strong>
+      <div style={{ display: 'grid', gap: 6 }}>
+        {(side?.players || []).map((player) => (
+          <div key={player.sleeper_id} style={{ display: 'grid', gap: 2 }}>
+            <span>{player.name}</span>
+            <small style={{ color: '#5f6b7a' }}>{playerMeta(player)}</small>
+          </div>
+        ))}
+        {(side?.picks || []).map((pick) => (
+          <div key={`${pick.year}-${pick.round}`} style={{ display: 'grid', gap: 2 }}>
+            <span>{pick.year} round {pick.round} pick</span>
+            <small style={{ color: '#5f6b7a' }}>Dynasty value {Math.round(pick.value || 0)}</small>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export default function Proposals() {
   const [leagueId, setLeagueId] = useState('');
+  const [valueMode, setValueMode] = useState('dynasty');
+  const [strategy, setStrategy] = useState('balanced');
   const [proposals, setProposals] = useState([]);
+  const [degradedReasons, setDegradedReasons] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   async function generateProposals() {
     setLoading(true);
     setError('');
+    setDegradedReasons([]);
 
     try {
-      const response = await fetch(`/fantasy/proposals/${leagueId}`);
+      const params = new URLSearchParams({ value_mode: valueMode, strategy });
+      const response = await fetch(`/fantasy/proposals/${leagueId}?${params.toString()}`);
       if (!response.ok) {
         throw new Error('Unable to load proposals');
       }
-      setProposals(await response.json());
+      const data = await response.json();
+      setProposals(Array.isArray(data) ? data : data.proposals || []);
+      setDegradedReasons(Array.isArray(data?.degraded_reasons) ? data.degraded_reasons : []);
     } catch (err) {
       setProposals([]);
       setError(err.message);
@@ -40,9 +81,13 @@ export default function Proposals() {
   async function copyProposal(proposal) {
     const text = [
       `Trade proposal #${proposal.rank}`,
+      `Mode: ${proposal.value_mode || valueMode}`,
+      `Strategy: ${proposal.strategy || strategy}`,
       `You send: ${sideText(proposal.side_a)}`,
       `You receive: ${sideText(proposal.side_b)}`,
       `Verdict: ${proposal.verdict}`,
+      `Dynasty delta: ${proposal.dynasty_delta}`,
+      `Redraft delta: ${proposal.redraft_delta}`,
       proposal.justification,
     ].join('\n');
     if (navigator.clipboard) {
@@ -55,6 +100,23 @@ export default function Proposals() {
       <section style={{ display: 'grid', gap: 22, margin: '0 auto', maxWidth: 1040 }}>
         <h1 style={{ margin: 0 }}>Proposals</h1>
         <LeagueSelector onSelect={setLeagueId} />
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14 }}>
+          <label style={{ display: 'grid', fontWeight: 700, gap: 6 }}>
+            Value mode
+            <select value={valueMode} onChange={(event) => setValueMode(event.target.value)} style={{ padding: 10 }}>
+              <option value="dynasty">Dynasty</option>
+              <option value="redraft">Redraft</option>
+            </select>
+          </label>
+          <label style={{ display: 'grid', fontWeight: 700, gap: 6 }}>
+            Strategy
+            <select value={strategy} onChange={(event) => setStrategy(event.target.value)} style={{ padding: 10 }}>
+              <option value="balanced">Balanced</option>
+              <option value="win_now">Win now</option>
+              <option value="rebuild">Rebuild</option>
+            </select>
+          </label>
+        </div>
         <button
           disabled={loading || !leagueId}
           onClick={generateProposals}
@@ -64,6 +126,9 @@ export default function Proposals() {
         </button>
 
         {error && <p style={{ color: '#b42318' }}>{error}</p>}
+        {degradedReasons.length > 0 && (
+          <p style={{ color: '#b54708' }}>Data trust warning: {degradedReasons.join('; ')}</p>
+        )}
         {loading && <p>Loading...</p>}
 
         <div style={{ display: 'grid', gap: 14 }}>
@@ -84,11 +149,19 @@ export default function Proposals() {
                     <VerdictChip verdict={proposal.verdict} />
                   </div>
                 </div>
-                <p><strong>You send:</strong> {sideText(proposal.side_a)}</p>
-                <p><strong>You receive:</strong> {sideText(proposal.side_b)}</p>
+                <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+                  <SideDetail title="You send" side={proposal.side_a} />
+                  <SideDetail title="You receive" side={proposal.side_b} />
+                </div>
                 <div style={{ display: 'grid', gap: 6 }}>
                   <div style={{ background: '#fee2e2', borderRadius: 999, height: 10, width: `${(sideAValue / maxValue) * 100}%` }} />
                   <div style={{ background: '#dcfce7', borderRadius: 999, height: 10, width: `${(sideBValue / maxValue) * 100}%` }} />
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                  <small>Dynasty delta: {proposal.dynasty_delta > 0 ? '+' : ''}{proposal.dynasty_delta}</small>
+                  <small>Redraft delta: {proposal.redraft_delta > 0 ? '+' : ''}{proposal.redraft_delta}</small>
+                  <small>Win-now gain: {proposal.win_now_gain > 0 ? '+' : ''}{proposal.win_now_gain}</small>
+                  <small>Long-term cost: {proposal.long_term_cost}</small>
                 </div>
                 <p>{proposal.justification}</p>
                 <button onClick={() => copyProposal(proposal)} style={{ borderRadius: 8, cursor: 'pointer', padding: 9 }}>
