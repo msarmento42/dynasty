@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
 
 const POS_COLORS = {
@@ -6,6 +6,12 @@ const POS_COLORS = {
   RB: { bg: '#d1fae5', text: '#065f46' },
   WR: { bg: '#fef3c7', text: '#92400e' },
   TE: { bg: '#ede9fe', text: '#5b21b6' },
+};
+
+const SENTIMENT_STYLES = {
+  positive: { bg: '#dcfce7', text: '#166534', label: '+ Positive' },
+  negative: { bg: '#fee2e2', text: '#991b1b', label: '- Negative' },
+  neutral: { bg: '#f1f5f9', text: '#475569', label: '0 Neutral' },
 };
 
 /**
@@ -44,9 +50,15 @@ function formatTime(published_at) {
   }
 }
 
-function NewsCard({ item }) {
+function playerTrendLabel(trend) {
+  if (!trend) return '0 pos / 0 neg';
+  return `${trend.positive} pos / ${trend.negative} neg`;
+}
+
+function NewsCard({ item, trend }) {
   const posColor = POS_COLORS[item.position] || { bg: '#f2f4f7', text: '#344054' };
   const border = severityColor(item.headline);
+  const sentiment = SENTIMENT_STYLES[item.sentiment] || SENTIMENT_STYLES.neutral;
 
   return (
     <div
@@ -77,6 +89,22 @@ function NewsCard({ item }) {
         {item.team && (
           <span style={{ color: '#667085', fontSize: 12 }}>{item.team}</span>
         )}
+        <span
+          style={{
+            background: sentiment.bg,
+            borderRadius: 4,
+            color: sentiment.text,
+            fontSize: 11,
+            fontWeight: 700,
+            marginLeft: 'auto',
+            padding: '2px 7px',
+          }}
+        >
+          {sentiment.label}
+        </span>
+      </div>
+      <div style={{ color: '#667085', fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+        Recent tone: {playerTrendLabel(trend)}
       </div>
       <p style={{ fontWeight: 600, margin: '0 0 4px', fontSize: 14 }}>{item.headline}</p>
       {item.detail && (
@@ -97,6 +125,18 @@ export default function News() {
   const [news, setNews] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const sentimentByPlayer = useMemo(() => {
+    return news.reduce((acc, item) => {
+      const key = item.sleeper_id || item.player_name || 'unknown';
+      if (!acc[key]) {
+        acc[key] = { positive: 0, negative: 0, neutral: 0 };
+      }
+      const sentiment = SENTIMENT_STYLES[item.sentiment] ? item.sentiment : 'neutral';
+      acc[key][sentiment] += 1;
+      return acc;
+    }, {});
+  }, [news]);
 
   const loadNews = useCallback(async (leagueId) => {
     setSelectedLeague(leagueId);
@@ -172,7 +212,11 @@ export default function News() {
         {!loading && !error && news.length > 0 && (
           <div style={{ display: 'grid', gap: 12 }}>
             {news.map((item) => (
-              <NewsCard key={item.id || `${item.sleeper_id}-${item.published_at}`} item={item} />
+              <NewsCard
+                key={item.id || `${item.sleeper_id}-${item.published_at}`}
+                item={item}
+                trend={sentimentByPlayer[item.sleeper_id || item.player_name || 'unknown']}
+              />
             ))}
           </div>
         )}

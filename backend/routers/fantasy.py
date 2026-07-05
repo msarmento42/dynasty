@@ -36,6 +36,7 @@ from backend.services.fantasy_engine import (  # noqa: E402
 from backend.services.recommendations import generate_football_recommendations  # noqa: E402
 from backend.services.proposals import generate_proposals  # noqa: E402
 from backend.services import data_trust  # noqa: E402
+from backend.services.espn_news import classify_news_sentiment  # noqa: E402
 from backend.services import sleeper as sleeper_svc  # noqa: E402
 
 router = APIRouter()
@@ -2383,6 +2384,7 @@ async def get_news(league_id: Optional[str] = None):
             "published_at": r[5],
             "position": r[6],
             "team": r[7],
+            "sentiment": classify_news_sentiment(r[2], r[3]),
         }
         for r in rows
     ]
