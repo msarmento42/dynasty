@@ -721,6 +721,93 @@ async def _activity_player_names(db: aiosqlite.Connection, player_ids: set[str])
     return {str(row[0]): row[1] for row in rows if row[0] and row[1]}
 
 
+async def _digest_roster_players(db: aiosqlite.Connection, league: dict) -> list[dict]:
+    my_roster_id = league.get("config", {}).get("my_roster_id", league.get("my_roster_id"))
+    async with db.execute(
+        "SELECT player_ids_json FROM rosters WHERE league_id=? AND roster_id=?",
+        (league["league_id"], my_roster_id),
+    ) as cur:
+        row = await cur.fetchone()
+
+    if not row:
+        return []
+    player_ids = json.loads(row[0] or "[]")
+    return await get_players_for_ids(db, player_ids, str(league["league_id"]))
+
+
+async def _digest_upcoming_byes(db: aiosqlite.Connection, league: dict, weeks: int = 4) -> list[dict]:
+    players = await _digest_roster_players(db, league)
+    if not players:
+        return []
+
+    await attach_schedule_sos_summaries(players, weeks=weeks)
+    byes = []
+    for player in players:
+        for matchup in player.get("schedule_sos", {}).get("opponents", []):
+            if matchup.get("opponent"):
+                continue
+            byes.append({
+                "week": matchup.get("week"),
+                "sleeper_id": player.get("sleeper_id"),
+                "name": player.get("name"),
+                "position": player.get("position"),
+                "team": player.get("team"),
+            })
+    return sorted(byes, key=lambda item: (item.get("week") or 99, item.get("name") or ""))
+
+
+@router.get("/digest")
+async def get_digest(league_id: Optional[str] = None):
+    """Return a weekly action digest assembled from existing computed sources."""
+    warnings = []
+    async with aiosqlite.connect(DB_PATH) as db:
+        leagues = await _activity_leagues(db, league_id)
+        try:
+            movers = await get_value_movers()
+        except Exception as exc:
+            movers = {"gainers": [], "losers": []}
+            warnings.append({"section": "movers", "detail": str(exc)})
+
+        league_payloads = []
+        for league in leagues:
+            lid = str(league["league_id"])
+            league_name = league.get("name") or lid
+
+            try:
+                proposals = await generate_proposals(lid)
+            except Exception as exc:
+                proposals = []
+                warnings.append({"league_id": lid, "section": "trade_opportunities", "detail": str(exc)})
+
+            try:
+                waiver_payload = await get_waiver_wire(lid)
+                waiver_targets = waiver_payload.get("free_agents", [])[:8]
+            except Exception as exc:
+                waiver_targets = []
+                warnings.append({"league_id": lid, "section": "waiver_targets", "detail": str(exc)})
+
+            try:
+                upcoming_byes = await _digest_upcoming_byes(db, league)
+            except Exception as exc:
+                upcoming_byes = []
+                warnings.append({"league_id": lid, "section": "upcoming_byes", "detail": str(exc)})
+
+            league_payloads.append({
+                "league_id": lid,
+                "name": league_name,
+                "trade_opportunities": proposals[:5],
+                "waiver_targets": waiver_targets,
+                "upcoming_byes": upcoming_byes[:12],
+            })
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "movers": movers,
+        "leagues": league_payloads,
+        "warnings": warnings,
+    }
+
+
 @router.get("/activity")
 async def get_activity(
     league_id: Optional[str] = None,
