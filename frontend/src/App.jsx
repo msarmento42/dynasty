@@ -618,6 +618,213 @@ function Activity() {
   );
 }
 
+function DigestPlayerRow({ player, valueKey = 'value_sf' }) {
+  const value = Number(player[valueKey] ?? player.value ?? player.adjusted_value ?? 0);
+  return (
+    <li
+      style={{
+        alignItems: 'center',
+        borderBottom: '1px solid #eef2f6',
+        display: 'grid',
+        gap: 8,
+        gridTemplateColumns: '1fr auto',
+        padding: '9px 0',
+      }}
+    >
+      <span>
+        <strong>{player.name || player.player_name || 'Unknown player'}</strong>
+        <span style={{ color: '#667085', fontSize: 13 }}>
+          {' '}· {player.position || '—'} {player.team ? `· ${player.team}` : ''}
+        </span>
+      </span>
+      <span style={{ color: '#344054', fontSize: 13, fontWeight: 700 }}>
+        {value ? value.toLocaleString() : '—'}
+      </span>
+    </li>
+  );
+}
+
+function DigestSection({ title, children, empty }) {
+  return (
+    <section
+      style={{
+        background: '#fff',
+        border: '1px solid #d9dee7',
+        borderRadius: 8,
+        padding: 18,
+      }}
+    >
+      <h2 style={{ fontSize: 18, margin: '0 0 12px' }}>{title}</h2>
+      {children || <p style={{ color: '#667085', margin: 0 }}>{empty}</p>}
+    </section>
+  );
+}
+
+function DigestLeague({ league }) {
+  const trades = league.trade_opportunities || [];
+  const waivers = league.waiver_targets || [];
+  const byes = league.upcoming_byes || [];
+
+  return (
+    <div style={{ display: 'grid', gap: 14 }}>
+      <h2 style={{ fontSize: 22, margin: '10px 0 0' }}>{league.name}</h2>
+      <div style={{ display: 'grid', gap: 14, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+        <DigestSection title="Trade Opportunities" empty="No trade opportunities surfaced yet.">
+          {trades.length > 0 && (
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+              {trades.slice(0, 4).map((trade, index) => (
+                <li
+                  key={`${league.league_id}-trade-${trade.id || index}`}
+                  style={{ borderBottom: '1px solid #eef2f6', padding: '9px 0' }}
+                >
+                  <strong>{trade.summary || trade.rationale || 'Trade idea'}</strong>
+                  <p style={{ color: '#667085', fontSize: 13, margin: '4px 0 0' }}>
+                    {trade.partner_name || trade.other_manager || 'Potential partner'}
+                    {trade.delta ? ` · Delta ${Number(trade.delta).toLocaleString()}` : ''}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </DigestSection>
+
+        <DigestSection title="Waiver Targets" empty="No waiver targets found for this league.">
+          {waivers.length > 0 && (
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+              {waivers.slice(0, 6).map((player) => (
+                <DigestPlayerRow key={`${league.league_id}-waiver-${player.sleeper_id}`} player={player} />
+              ))}
+            </ul>
+          )}
+        </DigestSection>
+
+        <DigestSection title="Upcoming Bye Weeks" empty="No roster bye weeks in the next four weeks.">
+          {byes.length > 0 && (
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+              {byes.map((player) => (
+                <li
+                  key={`${league.league_id}-bye-${player.sleeper_id}-${player.week}`}
+                  style={{ borderBottom: '1px solid #eef2f6', padding: '9px 0' }}
+                >
+                  <strong>Week {player.week}</strong>
+                  <span style={{ color: '#667085', fontSize: 13 }}>
+                    {' '}· {player.name} · {player.position || '—'} {player.team ? `· ${player.team}` : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </DigestSection>
+      </div>
+    </div>
+  );
+}
+
+function Digest() {
+  const [digest, setDigest] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    async function loadDigest() {
+      setLoading(true);
+      setError('');
+      try {
+        const res = await fetch('/fantasy/digest');
+        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        setDigest(await res.json());
+      } catch (err) {
+        setError(err.message);
+        setDigest(null);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadDigest();
+  }, []);
+
+  const gainers = digest?.movers?.gainers || [];
+  const losers = digest?.movers?.losers || [];
+  const leagues = digest?.leagues || [];
+
+  return (
+    <main style={{ background: '#f6f7fb', minHeight: '100vh', padding: 24 }}>
+      <section style={{ margin: '0 auto', maxWidth: 1120 }}>
+        <div style={{ marginBottom: 20 }}>
+          <h1 style={{ margin: '0 0 4px' }}>Weekly Digest</h1>
+          <p style={{ color: '#667085', margin: 0 }}>
+            Biggest movers, bye-week pressure, trade ideas, and waiver targets in one view.
+          </p>
+        </div>
+
+        {loading && <p style={{ color: '#667085' }}>Loading digest...</p>}
+
+        {error && (
+          <div
+            style={{
+              background: '#fef3f2',
+              border: '1px solid #fda29b',
+              borderRadius: 8,
+              color: '#b42318',
+              padding: 16,
+            }}
+          >
+            <strong>Error:</strong> {error}
+          </div>
+        )}
+
+        {!loading && !error && digest && (
+          <div style={{ display: 'grid', gap: 18 }}>
+            {digest.warnings?.length > 0 && (
+              <div
+                style={{
+                  background: '#fffaeb',
+                  border: '1px solid #fedf89',
+                  borderRadius: 8,
+                  color: '#93370d',
+                  padding: 14,
+                }}
+              >
+                Some digest sections could not be refreshed.
+              </div>
+            )}
+
+            <DigestSection title="Biggest Value Movers" empty="Not enough snapshot history for value movers yet.">
+              {(gainers.length > 0 || losers.length > 0) && (
+                <div style={{ display: 'grid', gap: 18, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+                  <div>
+                    <h3 style={{ color: '#067647', fontSize: 15, margin: '0 0 6px' }}>Risers</h3>
+                    <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                      {gainers.slice(0, 5).map((player) => (
+                        <DigestPlayerRow key={`gainer-${player.sleeper_id}`} player={player} valueKey="delta" />
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 style={{ color: '#b42318', fontSize: 15, margin: '0 0 6px' }}>Fallers</h3>
+                    <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                      {losers.slice(0, 5).map((player) => (
+                        <DigestPlayerRow key={`loser-${player.sleeper_id}`} player={player} valueKey="delta" />
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
+            </DigestSection>
+
+            {leagues.length === 0 && (
+              <DigestSection title="League Digest" empty="No synced leagues found. Run daily sync first." />
+            )}
+            {leagues.map((league) => (
+              <DigestLeague key={league.league_id} league={league} />
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
+
 export default function App() {
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('darkMode') === 'true');
 
@@ -656,6 +863,7 @@ export default function App() {
       <nav style={{ flexWrap: 'wrap', gap: '4px 0' }}>
         <Link to="/">Roster</Link>
         <Link to="/dashboard">Dashboard</Link>
+        <Link to="/digest">Digest</Link>
         <Link to="/trade">Trade Builder</Link>
         <Link to="/proposals">Proposals</Link>
         <Link to="/playoffs">Playoffs</Link>
@@ -702,6 +910,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Roster />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/digest" element={<Digest />} />
         <Route path="/trade" element={<TradeBuilder />} />
         <Route path="/proposals" element={<Proposals />} />
         <Route path="/playoffs" element={<Playoffs />} />
