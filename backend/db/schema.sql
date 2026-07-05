@@ -85,6 +85,16 @@ CREATE TABLE IF NOT EXISTS player_snapshots (
     UNIQUE(sleeper_id, snapshot_date)
 );
 
+CREATE TABLE IF NOT EXISTS player_comps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sleeper_id TEXT NOT NULL,
+    comp_sleeper_id TEXT NOT NULL,
+    similarity_score REAL NOT NULL,
+    factors_json TEXT,
+    computed_at TEXT NOT NULL,
+    UNIQUE(sleeper_id, comp_sleeper_id)
+);
+
 CREATE TABLE IF NOT EXISTS roster_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     league_id TEXT NOT NULL,

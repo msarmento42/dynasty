@@ -292,6 +292,77 @@ def player_value_trend(snapshot_rows: list) -> dict:
     }
 
 
+def _similarity_component(delta: float, scale: float) -> float:
+    return max(0.0, 1.0 - (abs(float(delta or 0)) / max(scale, 1.0)))
+
+
+def _opportunity_tier(player: dict) -> int:
+    depth = player.get("depth_chart_order")
+    if depth is not None:
+        try:
+            depth_number = int(depth)
+        except (TypeError, ValueError):
+            depth_number = None
+        if depth_number is not None:
+            if depth_number <= 1:
+                return 3
+            if depth_number <= 3:
+                return 2
+            return 1
+
+    value = float(player.get("value_sf") or player.get("value_1qb") or 0)
+    if value >= 4500:
+        return 3
+    if value >= 1500:
+        return 2
+    return 1
+
+
+def compute_player_comps(target: dict, candidates: list[dict], limit: int = 3) -> list[dict]:
+    """
+    Rank same-position historical comps from available local metadata.
+
+    The original AGIOS contract names draft age, draft round, and opportunity tier.
+    The current players table does not store draft metadata, so this uses the
+    available proxy set: age, position, value band, and depth/value opportunity.
+    """
+    target_position = (target.get("position") or "").upper()
+    target_age = float(target.get("age") or 0)
+    target_value = float(target.get("value_sf") or target.get("value_1qb") or 0)
+    target_opportunity = _opportunity_tier(target)
+    ranked = []
+
+    for candidate in candidates:
+        if candidate.get("sleeper_id") == target.get("sleeper_id"):
+            continue
+        if (candidate.get("position") or "").upper() != target_position:
+            continue
+
+        candidate_age = float(candidate.get("age") or 0)
+        candidate_value = float(candidate.get("value_sf") or candidate.get("value_1qb") or 0)
+        candidate_opportunity = _opportunity_tier(candidate)
+        age_score = _similarity_component(candidate_age - target_age, 4.0) if target_age and candidate_age else 0.45
+        value_scale = max(target_value, candidate_value, 1000.0)
+        value_score = _similarity_component(candidate_value - target_value, value_scale)
+        opportunity_score = _similarity_component(candidate_opportunity - target_opportunity, 2.0)
+        score = round(((age_score * 0.38) + (value_score * 0.34) + (opportunity_score * 0.28)) * 100, 1)
+
+        ranked.append({
+            **candidate,
+            "similarity_score": score,
+            "factors": {
+                "age_delta": round(candidate_age - target_age, 1) if target_age and candidate_age else None,
+                "value_delta": round(candidate_value - target_value),
+                "target_opportunity_tier": target_opportunity,
+                "comp_opportunity_tier": candidate_opportunity,
+                "draft_metadata": "unavailable",
+            },
+        })
+
+    ranked.sort(key=lambda item: item["similarity_score"], reverse=True)
+    return ranked[: max(1, int(limit or 3))]
+
+
 def data_confidence(
     *,
     value: int = 0,
