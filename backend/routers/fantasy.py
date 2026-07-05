@@ -26,6 +26,7 @@ from backend.services.fantasy_engine import (  # noqa: E402
     LEAGUE_CONFIG,
     aggregate_confidence,
     compute_schedule_sos,
+    compute_player_comps,
     enrich_player,
     pick_value,
     player_value_trend,
@@ -289,6 +290,34 @@ async def attach_schedule_sos_summaries(players: list[dict], weeks: int = 4) -> 
                 for item in payload.get("opponents", [])[:weeks]
             ],
         }
+
+
+async def ensure_player_comps_table(db: aiosqlite.Connection) -> None:
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS player_comps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sleeper_id TEXT NOT NULL,
+            comp_sleeper_id TEXT NOT NULL,
+            similarity_score REAL NOT NULL,
+            factors_json TEXT,
+            computed_at TEXT NOT NULL,
+            UNIQUE(sleeper_id, comp_sleeper_id)
+        )
+        """
+    )
+    await db.commit()
+
+
+async def player_value_history(db: aiosqlite.Connection, sleeper_id: str) -> list[dict]:
+    async with db.execute(
+        "SELECT snapshot_date, value_sf FROM player_snapshots "
+        "WHERE sleeper_id = ? AND value_sf IS NOT NULL "
+        "ORDER BY snapshot_date ASC",
+        (sleeper_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+    return [{"date": row[0], "value": row[1]} for row in rows]
 
 
 def player_value(player: dict) -> float:
@@ -1525,6 +1554,7 @@ async def get_player_profile(player_id: str, response: Response):
             {"snapshot_date": trend_row[0], "value_sf": trend_row[1]}
             for trend_row in trend_rows
         ])
+        career_comps = await build_player_career_comps(db, p, limit=3)
         usage_trend = await get_usage_for_player(db, player_id)
         schedule_sos = await build_schedule_sos(p, weeks=8)
 
@@ -1570,10 +1600,124 @@ async def get_player_profile(player_id: str, response: Response):
         "positional_rank": positional_rank,
         "breakout_score": breakout_score,
         "value_trend": value_trend,
+        "career_comps": career_comps,
         "usage_trend": usage_trend,
         "schedule_sos": schedule_sos,
         "recent_stats": recent_stats,
         "comparable_players": comparable_players,
+    }
+
+
+async def build_player_career_comps(db: aiosqlite.Connection, player: dict, limit: int = 3) -> list[dict]:
+    await ensure_player_comps_table(db)
+    position = player.get("position") or "WR"
+    value = float(player.get("value_sf") or player.get("value_1qb") or 0)
+    value_floor = max(0, value * 0.35)
+    value_ceiling = max(value_floor + 1, value * 1.85)
+    async with db.execute(
+        """
+        SELECT sleeper_id, name, position, team, age, value_sf, value_1qb, trend_30d, depth_chart_order
+        FROM players
+        WHERE position = ?
+          AND sleeper_id != ?
+          AND COALESCE(value_sf, value_1qb, 0) BETWEEN ? AND ?
+        ORDER BY ABS(COALESCE(value_sf, value_1qb, 0) - ?) ASC
+        LIMIT 40
+        """,
+        (position, player["sleeper_id"], value_floor, value_ceiling, value),
+    ) as cur:
+        candidate_rows = await cur.fetchall()
+
+    candidates = [
+        {
+            "sleeper_id": row[0],
+            "name": row[1],
+            "position": row[2],
+            "team": row[3],
+            "age": row[4],
+            "value_sf": row[5] or 0,
+            "value_1qb": row[6] or 0,
+            "trend_30d": row[7] or 0,
+            "depth_chart_order": row[8],
+        }
+        for row in candidate_rows
+    ]
+    comps = compute_player_comps(player, candidates, limit=limit)
+    computed_at = datetime.now(timezone.utc).isoformat()
+    payload = []
+
+    for comp in comps:
+        await db.execute(
+            """
+            INSERT INTO player_comps (
+                sleeper_id, comp_sleeper_id, similarity_score, factors_json, computed_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(sleeper_id, comp_sleeper_id) DO UPDATE SET
+                similarity_score=excluded.similarity_score,
+                factors_json=excluded.factors_json,
+                computed_at=excluded.computed_at
+            """,
+            (
+                player["sleeper_id"],
+                comp["sleeper_id"],
+                comp["similarity_score"],
+                json.dumps(comp.get("factors") or {}),
+                computed_at,
+            ),
+        )
+        payload.append({
+            "sleeper_id": comp["sleeper_id"],
+            "name": comp["name"],
+            "position": comp.get("position"),
+            "team": comp.get("team"),
+            "age": comp.get("age"),
+            "dynasty_value": comp.get("value_sf") or comp.get("value_1qb") or 0,
+            "trend_30d": comp.get("trend_30d") or 0,
+            "similarity_score": comp["similarity_score"],
+            "factors": comp.get("factors") or {},
+            "trajectory": await player_value_history(db, comp["sleeper_id"]),
+        })
+
+    await db.commit()
+    return payload
+
+
+@router.get("/players/{player_id}/career-comps")
+async def get_player_career_comps(player_id: str, response: Response, limit: int = 3):
+    """Return the top historical player comps with value trajectories."""
+    response.headers["Cache-Control"] = PLAYER_VALUE_CACHE_CONTROL
+    requested_limit = max(1, min(int(limit or 3), 5))
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT sleeper_id, name, position, team, age, value_sf, value_1qb, trend_30d, depth_chart_order "
+            "FROM players WHERE sleeper_id = ?",
+            (player_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Player {player_id} not found.")
+
+        player = {
+            "sleeper_id": row[0],
+            "name": row[1],
+            "position": row[2],
+            "team": row[3],
+            "age": row[4],
+            "value_sf": row[5] or 0,
+            "value_1qb": row[6] or 0,
+            "trend_30d": row[7] or 0,
+            "depth_chart_order": row[8],
+        }
+        comps = await build_player_career_comps(db, player, limit=requested_limit)
+        target_history = await player_value_history(db, player_id)
+
+    return {
+        "sleeper_id": player["sleeper_id"],
+        "name": player["name"],
+        "position": player.get("position"),
+        "target_trajectory": target_history,
+        "comps": comps,
     }
 
 

@@ -196,6 +196,8 @@ export default function PlayerProfile() {
   const [ageProjectionError, setAgeProjectionError] = useState('');
   const [valueTrend, setValueTrend] = useState(null);
   const [valueTrendError, setValueTrendError] = useState('');
+  const [careerComps, setCareerComps] = useState(null);
+  const [careerCompsError, setCareerCompsError] = useState('');
   const [usageTrend, setUsageTrend] = useState(null);
   const [usageTrendError, setUsageTrendError] = useState('');
   const [scheduleSos, setScheduleSos] = useState(null);
@@ -211,6 +213,8 @@ export default function PlayerProfile() {
     setAgeProjectionError('');
     setValueTrend(null);
     setValueTrendError('');
+    setCareerComps(null);
+    setCareerCompsError('');
     setUsageTrend(null);
     setUsageTrendError('');
     setScheduleSos(null);
@@ -223,6 +227,7 @@ export default function PlayerProfile() {
       .then((data) => {
         setPlayer(data);
         setValueTrend(data.value_trend || null);
+        setCareerComps(data.career_comps ? { comps: data.career_comps } : null);
         setUsageTrend(data.usage_trend || null);
         setScheduleSos(data.schedule_sos || null);
         setLoading(false);
@@ -239,6 +244,14 @@ export default function PlayerProfile() {
       })
       .then((data) => setValueTrend(data))
       .catch((err) => setValueTrendError(err.message));
+
+    fetch(`/fantasy/players/${playerId}/career-comps?limit=3`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Career comps unavailable (${res.status})`);
+        return res.json();
+      })
+      .then((data) => setCareerComps(data))
+      .catch((err) => setCareerCompsError(err.message));
 
     fetch(`/fantasy/players/${playerId}/usage`)
       .then((res) => {
@@ -421,6 +434,7 @@ export default function PlayerProfile() {
 
             <ValueTrendChart
               history={valueTrend?.window_90d || []}
+              compTrajectories={careerComps?.comps || []}
               title="Player value trend"
               emptyMessage="Need at least two player value snapshots before the BUY/SELL/HOLD signal can render."
               signal={valueTrend?.signal}
@@ -429,6 +443,9 @@ export default function PlayerProfile() {
             />
             {valueTrendError && (
               <p style={{ color: '#b42318', margin: '-8px 0 0' }}>{valueTrendError}</p>
+            )}
+            {careerCompsError && (
+              <p style={{ color: '#b42318', margin: '-8px 0 0' }}>{careerCompsError}</p>
             )}
 
             <AgeCurveChart projection={ageProjection} />

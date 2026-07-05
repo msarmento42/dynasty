@@ -26,6 +26,7 @@ function formatValue(value) {
 function TrendTooltip({ active, payload, label }) {
   if (!active || !payload || !payload.length) return null;
   const point = payload[0].payload;
+  const rows = payload.filter((item) => item.value !== null && item.value !== undefined);
   return (
     <div
       style={{
@@ -37,7 +38,15 @@ function TrendTooltip({ active, payload, label }) {
       }}
     >
       <div style={{ color: '#cbd5e1', marginBottom: 3 }}>{formatDate(label || point.date)}</div>
-      <strong>{formatValue(point.value)}</strong>
+      {rows.map((item) => (
+        <div
+          key={item.dataKey}
+          style={{ alignItems: 'center', display: 'flex', gap: 8, justifyContent: 'space-between', minWidth: 150 }}
+        >
+          <span style={{ color: item.color || '#cbd5e1' }}>{item.name}</span>
+          <strong>{formatValue(item.value)}</strong>
+        </div>
+      ))}
     </div>
   );
 }
@@ -50,6 +59,7 @@ const SIGNAL_STYLES = {
 
 export default function ValueTrendChart({
   history = [],
+  compTrajectories = [],
   title = '30-day roster value trend',
   emptyMessage = 'Need at least two daily sync snapshots before the trend chart can render.',
   signal = null,
@@ -66,6 +76,37 @@ export default function ValueTrendChart({
       date: item.synced_at || item.snapshot_date || item.date,
       value: Number(item.total_value ?? item.value),
     }));
+
+  const compSeries = compTrajectories
+    .filter((comp) => comp?.trajectory?.length)
+    .slice(0, 3)
+    .map((comp, index) => ({
+      key: `comp_${index}`,
+      name: comp.name || `Comp ${index + 1}`,
+      color: ['#7c3aed', '#0891b2', '#ea580c'][index] || '#64748b',
+      points: comp.trajectory
+        .filter((item) => {
+          const date = item?.synced_at || item?.snapshot_date || item?.date;
+          const value = item?.total_value ?? item?.value;
+          return date && Number.isFinite(Number(value));
+        })
+        .map((item) => ({
+          date: item.synced_at || item.snapshot_date || item.date,
+          value: Number(item.total_value ?? item.value),
+        })),
+    }))
+    .filter((comp) => comp.points.length >= 2);
+
+  const pointsByDate = new Map(points.map((point) => [point.date, { ...point }]));
+  for (const comp of compSeries) {
+    for (const point of comp.points) {
+      if (!pointsByDate.has(point.date)) {
+        pointsByDate.set(point.date, { date: point.date, value: null });
+      }
+      pointsByDate.get(point.date)[comp.key] = point.value;
+    }
+  }
+  const chartPoints = Array.from(pointsByDate.values()).sort((a, b) => new Date(a.date) - new Date(b.date));
 
   if (points.length < 2) {
     return (
@@ -129,7 +170,7 @@ export default function ValueTrendChart({
 
       <div style={{ height: 240, marginTop: 16 }}>
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={points} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+          <AreaChart data={chartPoints} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id="playerValueTrendGradient" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="#2563eb" stopOpacity={0.28} />
@@ -155,16 +196,41 @@ export default function ValueTrendChart({
             <Area
               type="monotone"
               dataKey="value"
+              name="Current player"
               fill="url(#playerValueTrendGradient)"
               stroke="#2563eb"
               strokeWidth={3}
               dot={false}
               activeDot={{ r: 5, fill: '#2563eb', stroke: '#ffffff', strokeWidth: 2 }}
             />
-            <Line type="monotone" dataKey="value" stroke="#1d4ed8" strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="value" name="Current player" stroke="#1d4ed8" strokeWidth={2} dot={false} />
+            {compSeries.map((comp) => (
+              <Line
+                key={comp.key}
+                type="monotone"
+                dataKey={comp.key}
+                name={comp.name}
+                stroke={comp.color}
+                strokeDasharray="4 4"
+                strokeOpacity={0.58}
+                strokeWidth={2}
+                dot={false}
+                connectNulls
+              />
+            ))}
           </AreaChart>
         </ResponsiveContainer>
       </div>
+      {compSeries.length > 0 && (
+        <div style={{ color: '#667085', display: 'flex', gap: 10, marginTop: 8, fontSize: 13, flexWrap: 'wrap' }}>
+          {compSeries.map((comp) => (
+            <span key={comp.key} style={{ alignItems: 'center', display: 'inline-flex', gap: 5 }}>
+              <span style={{ background: comp.color, borderRadius: 999, display: 'inline-block', height: 8, width: 8 }} />
+              {comp.name}
+            </span>
+          ))}
+        </div>
+      )}
       {(slope30 !== null || slope90 !== null) && (
         <div style={{ color: '#667085', display: 'flex', gap: 14, marginTop: 8, fontSize: 13, flexWrap: 'wrap' }}>
           {slope30 !== null && <span>30d slope: {Number(slope30).toFixed(2)}/day</span>}
