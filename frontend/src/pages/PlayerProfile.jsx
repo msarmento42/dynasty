@@ -48,6 +48,12 @@ function sosColor(score) {
   return { background: '#fee2e2', color: '#991b1b' };
 }
 
+function buyerScoreColor(score) {
+  if (Number(score) >= 65) return { background: '#dcfce7', color: '#166534' };
+  if (Number(score) >= 35) return { background: '#fef9c3', color: '#854d0e' };
+  return { background: '#f2f4f7', color: '#475467' };
+}
+
 // --- Skeleton Components Start ---
 const Skeleton = ({ width, height, borderRadius = 4, style = {} }) => (
   <div
@@ -202,6 +208,8 @@ export default function PlayerProfile() {
   const [usageTrendError, setUsageTrendError] = useState('');
   const [scheduleSos, setScheduleSos] = useState(null);
   const [scheduleSosError, setScheduleSosError] = useState('');
+  const [potentialBuyers, setPotentialBuyers] = useState(null);
+  const [potentialBuyersError, setPotentialBuyersError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -219,6 +227,8 @@ export default function PlayerProfile() {
     setUsageTrendError('');
     setScheduleSos(null);
     setScheduleSosError('');
+    setPotentialBuyers(null);
+    setPotentialBuyersError('');
     fetch(`/fantasy/players/${playerId}/profile`)
       .then((res) => {
         if (!res.ok) throw new Error(`Player not found (${res.status})`);
@@ -268,6 +278,14 @@ export default function PlayerProfile() {
       })
       .then((data) => setScheduleSos(data))
       .catch((err) => setScheduleSosError(err.message));
+
+    fetch(`/fantasy/players/${playerId}/potential-buyers?limit=8`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Potential buyers unavailable (${res.status})`);
+        return res.json();
+      })
+      .then((data) => setPotentialBuyers(data))
+      .catch((err) => setPotentialBuyersError(err.message));
 
     fetch(`/fantasy/players/${playerId}/age-curve-projection`)
       .then((res) => {
@@ -625,6 +643,127 @@ export default function PlayerProfile() {
                 <p style={{ color: '#667085', margin: 0 }}>
                   No weekly usage stats have been synced for this player yet.
                 </p>
+              )}
+            </section>
+
+            <section
+              style={{
+                background: '#ffffff',
+                border: '1px solid #d9dee7',
+                borderRadius: 10,
+                padding: 20,
+              }}
+            >
+              <div
+                style={{
+                  alignItems: 'flex-start',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 16,
+                  marginBottom: 14,
+                }}
+              >
+                <div>
+                  <h2 style={{ margin: 0 }}>Potential Buyers</h2>
+                  <p style={{ color: '#667085', margin: '4px 0 0' }}>
+                    Managers with below-average {player.position} depth and value across synced leagues.
+                  </p>
+                </div>
+                <span
+                  style={{
+                    background: '#eff6ff',
+                    borderRadius: 999,
+                    color: '#1d4ed8',
+                    fontSize: 12,
+                    fontWeight: 800,
+                    padding: '5px 10px',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {potentialBuyers?.buyers?.length || 0} matches
+                </span>
+              </div>
+              {potentialBuyersError && <p style={{ color: '#b42318' }}>{potentialBuyersError}</p>}
+              {!potentialBuyers && !potentialBuyersError && (
+                <p style={{ color: '#667085', margin: 0 }}>Checking league rosters...</p>
+              )}
+              {potentialBuyers?.buyers?.length > 0 ? (
+                <div style={{ display: 'grid', gap: 12 }}>
+                  {potentialBuyers.buyers.map((buyer) => {
+                    const scoreColors = buyerScoreColor(buyer.score);
+                    return (
+                      <article
+                        key={`${buyer.league_id}-${buyer.roster_id}`}
+                        style={{
+                          border: '1px solid #d9dee7',
+                          borderRadius: 8,
+                          padding: 14,
+                          background: '#f8fafc',
+                        }}
+                      >
+                        <div
+                          style={{
+                            alignItems: 'flex-start',
+                            display: 'flex',
+                            gap: 12,
+                            justifyContent: 'space-between',
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 800 }}>{buyer.manager}</div>
+                            <div style={{ color: '#667085', fontSize: 13, marginTop: 2 }}>
+                              {buyer.league_name || buyer.league_id}
+                            </div>
+                          </div>
+                          <span
+                            style={{
+                              ...scoreColors,
+                              borderRadius: 999,
+                              fontSize: 12,
+                              fontWeight: 800,
+                              padding: '4px 9px',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {buyer.score}/100 fit
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            display: 'grid',
+                            gap: 10,
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))',
+                            marginTop: 12,
+                          }}
+                        >
+                          <StatRow
+                            label={`${buyer.position} value gap`}
+                            value={Number(buyer.value_gap || 0).toLocaleString()}
+                          />
+                          <StatRow
+                            label={`${buyer.position} depth`}
+                            value={`${buyer.position_count} vs ${buyer.league_avg_position_count}`}
+                          />
+                        </div>
+                        <p style={{ color: '#475467', margin: '10px 0 0' }}>{buyer.reason}</p>
+                        {buyer.top_position_players?.length > 0 && (
+                          <div style={{ color: '#667085', fontSize: 13, marginTop: 8 }}>
+                            Current {buyer.position}: {' '}
+                            {buyer.top_position_players
+                              .map((slot) => `${slot.name} (${Number(slot.value || 0).toLocaleString()})`)
+                              .join(', ')}
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                potentialBuyers && !potentialBuyersError && (
+                  <p style={{ color: '#667085', margin: 0 }}>
+                    No strong buyer matches found for this position in synced rosters.
+                  </p>
+                )
               )}
             </section>
 
