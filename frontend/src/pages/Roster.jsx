@@ -65,6 +65,7 @@ export default function Roster() {
   const [rosterData, setRosterData] = useState(null);
   const [valueHistory, setValueHistory] = useState([]);
   const [leagueSettings, setLeagueSettings] = useState(null);
+  const [rosterManagement, setRosterManagement] = useState(null);
   const [cacheStatus, setCacheStatus] = useState({ cached_at: null, cache_age_seconds: null });
   const [loading, setLoading] = useState(false);
   const [refreshingValues, setRefreshingValues] = useState(false);
@@ -111,6 +112,7 @@ export default function Roster() {
     setLoading(!options.silent);
     setError('');
     setLeagueSettings(null);
+    setRosterManagement(null);
     setValueHistory([]);
     setTriggeredAlerts([]); // Clear alerts on new roster load
 
@@ -119,11 +121,12 @@ export default function Roster() {
     window.history.pushState({ path: newUrl.href }, '', newUrl.href);
 
     try {
-      const [rosterRes, settingsRes, cacheRes, historyRes] = await Promise.allSettled([
+      const [rosterRes, settingsRes, cacheRes, historyRes, managementRes] = await Promise.allSettled([
         fetch(`/fantasy/league/${leagueId}/roster`, { cache: 'no-store' }),
         fetch(`/fantasy/league/${leagueId}/settings`),
         fetch('/fantasy/cache-status', { cache: 'no-store' }),
         fetch(`/fantasy/league/${leagueId}/roster-value-history`, { cache: 'no-store' }),
+        fetch(`/fantasy/league/${leagueId}/roster-management`, { cache: 'no-store' }),
       ]);
 
       if (rosterRes.status === 'fulfilled' && rosterRes.value.ok) {
@@ -144,8 +147,13 @@ export default function Roster() {
         const payload = await historyRes.value.json();
         setValueHistory(payload.history || []);
       }
+
+      if (managementRes.status === 'fulfilled' && managementRes.value.ok) {
+        setRosterManagement(await managementRes.value.json());
+      }
     } catch (err) {
       setRosterData(null);
+      setRosterManagement(null);
       setValueHistory([]);
       setError(err.message);
     } finally {
@@ -560,6 +568,55 @@ export default function Roster() {
                     </li>
                   ))}
                 </ul>
+              </div>
+            )}
+
+            {rosterManagement?.flags?.length > 0 && (
+              <div style={{ background: '#ecfdf3', border: '1px solid #abefc6', borderRadius: 8, padding: 16 }}>
+                <h3 style={{ color: '#027a48', fontSize: 16, margin: '0 0 10px' }}>
+                  Roster Slot Alerts ({rosterManagement.flags.length})
+                </h3>
+                <div style={{ display: 'grid', gap: 10 }}>
+                  {rosterManagement.flags.map((flag) => (
+                    <div
+                      key={`${flag.player_id}-${flag.recommended_slot}`}
+                      style={{
+                        alignItems: 'center',
+                        background: '#ffffff',
+                        border: '1px solid #d1fadf',
+                        borderRadius: 8,
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 8,
+                        justifyContent: 'space-between',
+                        padding: '10px 12px',
+                      }}
+                    >
+                      <div>
+                        <strong style={{ color: '#064e3b' }}>{flag.player_name}</strong>
+                        <span style={{ color: '#475467', fontSize: 13 }}>
+                          {' '}({flag.position || 'Flex'}{flag.team ? `, ${flag.team}` : ''})
+                        </span>
+                        <p style={{ color: '#475467', fontSize: 13, margin: '3px 0 0' }}>
+                          {flag.reason}
+                        </p>
+                      </div>
+                      <span
+                        style={{
+                          background: flag.recommended_slot === 'IR' ? '#fee2e2' : '#e0f2fe',
+                          borderRadius: 999,
+                          color: flag.recommended_slot === 'IR' ? '#991b1b' : '#0369a1',
+                          fontSize: 12,
+                          fontWeight: 800,
+                          padding: '5px 9px',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {flag.suggested_fix}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 

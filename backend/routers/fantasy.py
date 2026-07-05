@@ -39,6 +39,7 @@ from backend.services.fantasy_engine import (  # noqa: E402
 )
 from backend.services.recommendations import generate_football_recommendations  # noqa: E402
 from backend.services.proposals import generate_proposals  # noqa: E402
+from backend.services.roster_grade import roster_slot_management_flags  # noqa: E402
 from backend.services.trade_history import trade_leaderboard, trade_value_analysis  # noqa: E402
 from backend.services import data_trust  # noqa: E402
 from backend.services.espn_news import classify_news_sentiment  # noqa: E402
@@ -903,6 +904,96 @@ async def get_my_roster(league_id: str):
         "players": players,
         "total_adjusted_value": total,
         "data_confidence": aggregate_confidence(players),
+    }
+
+
+@router.get("/league/{league_id}/roster-management")
+async def get_roster_management_flags(league_id: str):
+    """Return IR/taxi slot suggestions for Marcus's roster in a league."""
+    warnings = []
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        league = await get_league_row(db, league_id)
+        my_roster_id = league["config"].get("my_roster_id", league["my_roster_id"])
+
+        async with db.execute(
+            "SELECT player_ids_json FROM rosters WHERE league_id=? AND roster_id=?",
+            (league_id, my_roster_id),
+        ) as cur:
+            row = await cur.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Roster not found. Run daily sync first.")
+
+        stored_player_ids = json.loads(row[0] or "[]")
+        players = await get_players_for_ids(db, stored_player_ids, league_id)
+
+        async with db.execute("PRAGMA table_info(players)") as cur:
+            columns = {column[1] for column in await cur.fetchall()}
+
+        if "years_exp" in columns and stored_player_ids:
+            placeholders = ",".join("?" * len(stored_player_ids))
+            async with db.execute(
+                f"SELECT sleeper_id, years_exp FROM players WHERE sleeper_id IN ({placeholders})",
+                stored_player_ids,
+            ) as cur:
+                years_rows = await cur.fetchall()
+            years_exp_by_id = {str(sleeper_id): years_exp for sleeper_id, years_exp in years_rows}
+            for player in players:
+                player["years_exp"] = years_exp_by_id.get(str(player.get("sleeper_id")))
+
+    reserve_ids: set[str] = set()
+    taxi_ids: set[str] = set()
+    active_ids: set[str] = {str(player_id) for player_id in stored_player_ids}
+    reserve_slots = 0
+    taxi_slots = 0
+
+    try:
+        league_data, live_rosters = await asyncio.gather(
+            sleeper_svc.fetch_league_info(league_id),
+            sleeper_svc.fetch_rosters(league_id),
+        )
+        roster_positions = league_data.get("roster_positions") or []
+        settings = league_data.get("settings") or {}
+        reserve_slots = roster_positions.count("IR") + int(settings.get("reserve_slots") or 0)
+        taxi_slots = int(settings.get("taxi_slots") or roster_positions.count("TAXI") or 0)
+
+        live_roster = next(
+            (roster for roster in live_rosters if int(roster.get("roster_id") or 0) == int(my_roster_id)),
+            None,
+        )
+        if live_roster:
+            live_player_ids = {str(player_id) for player_id in (live_roster.get("players") or [])}
+            reserve_ids = {str(player_id) for player_id in (live_roster.get("reserve") or [])}
+            taxi_ids = {str(player_id) for player_id in (live_roster.get("taxi") or [])}
+            active_ids = live_player_ids - reserve_ids - taxi_ids
+    except Exception as exc:  # pragma: no cover - external Sleeper availability guard
+        warnings.append(f"Sleeper roster slot metadata unavailable: {exc}")
+        reserve_slots = 0
+        taxi_slots = 0
+
+    flags = roster_slot_management_flags(
+        players,
+        active_ids,
+        reserve_ids,
+        taxi_ids,
+        reserve_slots=reserve_slots,
+        taxi_slots=taxi_slots,
+    )
+
+    return {
+        "league_id": league_id,
+        "league_name": league["name"],
+        "roster_id": my_roster_id,
+        "flags": flags,
+        "flag_count": len(flags),
+        "slots": {
+            "reserve_slots": reserve_slots,
+            "taxi_slots": taxi_slots,
+            "reserve_used": len(reserve_ids),
+            "taxi_used": len(taxi_ids),
+        },
+        "warnings": warnings,
     }
 
 
