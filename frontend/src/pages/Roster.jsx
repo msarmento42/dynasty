@@ -4,7 +4,7 @@ import LeagueSelector from '../components/LeagueSelector.jsx';
 import ExportButton from '../components/ExportButton.jsx';
 import ValueTrendChart from '../components/ValueTrendChart.jsx';
 import ConfidenceBadge from '../components/ConfidenceBadge.jsx';
-import PlayerChip from '../components/PlayerChip.jsx';
+import PlayerChip from '../components/PlayerChip.jsx';import FaabBudgetTracker from '../components/FaabBudgetTracker.jsx';
 
 const POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
 
@@ -507,7 +507,8 @@ export default function Roster() {
                 fontSize: 14,
               }}
             />
-          </div>
+          </div>          {/* FAAB Budget Tracker Component */}
+          <FaabBudgetTracker />
         </div>
 
         {loading && <p>Loading...</p>}
