@@ -185,6 +185,119 @@ async def fetch_weekly_player_usage(season: int, week: int, season_type: str = "
     return _normalize_usage_stats(season, week, data)
 
 
+async def fetch_weekly_player_stats(season: int, week: int, season_type: str = "regular") -> dict[str, Any]:
+    """Fetch raw weekly player stat rows from Sleeper."""
+    data = await _get_json(f"/stats/nfl/{season_type}/{season}/{week}")
+    return data if isinstance(data, dict) else {}
+
+
+async def fetch_nfl_week_schedule(season: int, week: int, season_type: str = "regular") -> list[dict[str, Any]]:
+    """Fetch a Sleeper NFL schedule week, returning an empty list when unavailable."""
+    paths = [
+        f"/schedule/nfl/{season_type}/{season}/{week}",
+        f"/schedule/nfl/{season}/{week}",
+    ]
+    for path in paths:
+        try:
+            data = await _get_json(path)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                continue
+            raise
+        if isinstance(data, list):
+            return [game for game in data if isinstance(game, dict)]
+    return []
+
+
+def _game_teams(game: dict[str, Any]) -> tuple[str | None, str | None]:
+    home = game.get("home") or game.get("home_team") or game.get("home_team_abbr")
+    away = game.get("away") or game.get("away_team") or game.get("away_team_abbr")
+    return (str(home).upper() if home else None, str(away).upper() if away else None)
+
+
+async def fetch_upcoming_opponents(team: str, weeks: int = 8) -> list[dict[str, Any]]:
+    """Return upcoming opponents for a team from Sleeper schedule data."""
+    if not team:
+        return []
+
+    state = await fetch_nfl_state()
+    season = int(state.get("season") or datetime_now_year())
+    current_week = int(state.get("week") or 1)
+    season_type = str(state.get("season_type") or "regular")
+    team_code = str(team).upper()
+    opponents = []
+
+    for week in range(current_week, current_week + max(1, min(int(weeks or 8), 8))):
+        for game in await fetch_nfl_week_schedule(season, week, season_type=season_type):
+            home, away = _game_teams(game)
+            if not home or not away:
+                continue
+            if team_code == home:
+                opponents.append({"season": season, "week": week, "opponent": away, "home": True})
+                break
+            if team_code == away:
+                opponents.append({"season": season, "week": week, "opponent": home, "home": False})
+                break
+    return opponents
+
+
+def _fantasy_points(stats: dict[str, Any]) -> float | None:
+    return _float_stat(
+        stats,
+        "pts_ppr",
+        "pts_half_ppr",
+        "pts_std",
+        "fantasy_points_ppr",
+        "fantasy_points",
+    )
+
+
+async def fetch_defensive_points_allowed_by_position(
+    season: int | None = None,
+    through_week: int | None = None,
+    weeks_back: int = 6,
+    season_type: str = "regular",
+) -> dict[str, dict[str, Any]]:
+    """
+    Derive average fantasy points allowed by defense and position from Sleeper weekly stats.
+
+    Sleeper stat rows include opponent fields when available. When they do not, callers receive
+    an empty mapping and can present the SOS feature as unavailable instead of guessing.
+    """
+    state = await fetch_nfl_state()
+    stat_season = int(season or state.get("season") or datetime_now_year())
+    current_week = int(through_week or state.get("week") or 1)
+    stat_type = str(state.get("season_type") or season_type)
+    players = await fetch_all_players()
+
+    start_week = max(1, current_week - max(1, weeks_back) + 1)
+    allowed: dict[str, dict[str, list[float]]] = {}
+    for week in range(start_week, current_week + 1):
+        weekly_stats = await fetch_weekly_player_stats(stat_season, week, season_type=stat_type)
+        for sleeper_id, stats in weekly_stats.items():
+            if not isinstance(stats, dict):
+                continue
+            opponent = stats.get("opp") or stats.get("opponent") or stats.get("opp_team")
+            points = _fantasy_points(stats)
+            player = players.get(str(sleeper_id), {}) if isinstance(players, dict) else {}
+            position = str(player.get("position") or stats.get("pos") or "").upper()
+            if not opponent or points is None or position not in {"QB", "RB", "WR", "TE"}:
+                continue
+            defense = str(opponent).upper()
+            allowed.setdefault(defense, {}).setdefault(position, []).append(float(points))
+
+    result: dict[str, dict[str, Any]] = {}
+    for defense, by_position in allowed.items():
+        result[defense] = {}
+        for position, values in by_position.items():
+            if values:
+                result[defense][position] = {
+                    "avg_points_allowed": round(sum(values) / len(values), 2),
+                    "sample_size": len(values),
+                }
+    return result
+
+
 async def fetch_recent_player_usage(weeks_back: int = 4) -> list[dict[str, Any]]:
     """Fetch recent weekly usage rows for the current Sleeper NFL season."""
     state = await fetch_nfl_state()
