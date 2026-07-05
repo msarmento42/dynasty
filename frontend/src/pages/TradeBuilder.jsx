@@ -255,24 +255,12 @@ export default function TradeBuilder() {
 
   return (
     <main style={{ background: '#f6f7fb', minHeight: '100vh', padding: 24 }}>
-      <section style={{ display: 'grid', gap: 22, margin: '0 auto', maxWidth: 1180 }}>
+      <section className="trade-builder-container">
         <h1 style={{ margin: 0 }}>Trade Builder</h1>
         <LeagueSelector onSelect={loadRosters} />
         {error && <p style={{ color: '#b42318' }}>{error}</p>}
 
-        <section
-          style={{
-            alignItems: 'center',
-            background: '#ffffff',
-            border: '1px solid #d9dee7',
-            borderRadius: 8,
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 14,
-            justifyContent: 'space-between',
-            padding: 14,
-          }}
-        >
+        <section className="trade-builder-mode-selector">
           <div style={{ display: 'flex', gap: 8 }}>
             {[
               ['in-season', 'In-Season'],
@@ -312,7 +300,7 @@ export default function TradeBuilder() {
           )}
         </section>
 
-        <div style={{ display: 'grid', gap: 20, gridTemplateColumns: 'minmax(0, 1.2fr) minmax(320px, 0.8fr)' }}>
+        <div className="trade-builder-grid">
           <section style={{ display: 'grid', gap: 16 }}>
             <div style={{ background: '#ffffff', border: '1px solid #d9dee7', borderRadius: 8, padding: 16 }}>
               <h2 style={{ marginTop: 0 }}>My players</h2>
