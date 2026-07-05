@@ -25,6 +25,7 @@ import MockDraft from './pages/MockDraft.jsx';
 import DataDoctor from './pages/DataDoctor.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import SimulationLab from './pages/SimulationLab.jsx';
+import Activity from './pages/Activity.jsx';
 
 const POS_COLORS = {
   QB: { bg: '#e0f2fe', text: '#0369a1' },
@@ -404,6 +405,7 @@ export default function App() {
         <Link to="/power-rankings">Power Rankings</Link>
         <Link to="/exposure">Exposure</Link>
         <Link to="/news">News</Link>
+        <Link to="/activity">Activity</Link>
         <Link to="/movers">Movers</Link>
         <Link to="/start-sit">Start/Sit</Link>
         <Link to="/waiver">Waiver Wire</Link>
@@ -450,6 +452,7 @@ export default function App() {
         <Route path="/power-rankings" element={<PowerRankings />} />
         <Route path="/exposure" element={<Exposure />} />
         <Route path="/news" element={<News />} />
+        <Route path="/activity" element={<Activity />} />
         <Route path="/movers" element={<Movers />} />
         <Route path="/start-sit" element={<StartSit />} />
         <Route path="/waiver" element={<WaiverWire />} />

@@ -1,5 +1,7 @@
 """Fantasy API endpoints - leagues, rosters, trade evaluation, picks."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import random
@@ -601,6 +603,127 @@ async def get_leagues():
         }
         for r in rows
     ]
+
+
+async def _activity_leagues(db: aiosqlite.Connection, league_id: str | None) -> list[dict]:
+    if league_id:
+        return [await get_league_row(db, league_id)]
+
+    async with db.execute(
+        "SELECT league_id, name, n_teams, format, my_roster_id, config_json FROM leagues"
+    ) as cur:
+        rows = await cur.fetchall()
+
+    if rows:
+        return [
+            {
+                "league_id": row[0],
+                "name": row[1],
+                "n_teams": row[2],
+                "format": row[3],
+                "my_roster_id": row[4],
+                "config": json.loads(row[5] or "{}"),
+            }
+            for row in rows
+        ]
+
+    return [
+        {
+            "league_id": lid,
+            "name": cfg["name"],
+            "n_teams": cfg["n_teams"],
+            "format": cfg.get("base_format", cfg.get("format")),
+            "my_roster_id": cfg.get("my_roster_id", 1),
+            "config": cfg,
+        }
+        for lid, cfg in LEAGUE_CONFIG.items()
+    ]
+
+
+async def _activity_roster_names(db: aiosqlite.Connection, league_id: str) -> dict[int, str]:
+    async with db.execute(
+        "SELECT roster_id, owner_display_name FROM rosters WHERE league_id=?",
+        (league_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+    return {int(row[0]): row[1] or f"Team {row[0]}" for row in rows if row[0] is not None}
+
+
+async def _activity_player_names(db: aiosqlite.Connection, player_ids: set[str]) -> dict[str, str]:
+    if not player_ids:
+        return {}
+
+    placeholders = ",".join("?" * len(player_ids))
+    async with db.execute(
+        f"SELECT sleeper_id, name FROM players WHERE sleeper_id IN ({placeholders})",
+        list(player_ids),
+    ) as cur:
+        rows = await cur.fetchall()
+    return {str(row[0]): row[1] for row in rows if row[0] and row[1]}
+
+
+@router.get("/activity")
+async def get_activity(
+    league_id: Optional[str] = None,
+    activity_type: Optional[str] = None,
+    weeks: int = 4,
+):
+    """Return normalized trade, waiver, and roster activity across Marcus's leagues."""
+    weeks = max(1, min(int(weeks or 4), 8))
+    activity_filter = activity_type.lower() if activity_type else None
+    if activity_filter and activity_filter not in {"trade", "waiver", "roster_move"}:
+        raise HTTPException(status_code=400, detail="activity_type must be trade, waiver, or roster_move")
+
+    items: list[dict] = []
+    warnings: list[dict] = []
+    async with aiosqlite.connect(DB_PATH) as db:
+        leagues = await _activity_leagues(db, league_id)
+        for league in leagues:
+            lid = str(league["league_id"])
+            league_name = league.get("name") or lid
+            roster_names = await _activity_roster_names(db, lid)
+            try:
+                raw_transactions = []
+                state = await sleeper_svc.fetch_nfl_state()
+                current_week = int(state.get("week") or 1)
+                start_week = max(1, current_week - weeks + 1)
+                for week in range(start_week, current_week + 1):
+                    raw_transactions.extend(await sleeper_svc.fetch_transactions(lid, week))
+            except Exception as exc:  # pragma: no cover - external Sleeper availability guard
+                warnings.append({"league_id": lid, "league_name": league_name, "detail": str(exc)})
+                continue
+
+            player_ids = set()
+            for transaction in raw_transactions:
+                for key in ("adds", "drops"):
+                    player_map = transaction.get(key)
+                    if isinstance(player_map, dict):
+                        player_ids.update(str(player_id) for player_id in player_map)
+            player_names = await _activity_player_names(db, player_ids)
+            league_items = sleeper_svc.normalize_transactions(
+                lid,
+                league_name,
+                raw_transactions,
+                roster_names=roster_names,
+                player_names=player_names,
+            )
+            if activity_filter:
+                league_items = [
+                    item for item in league_items
+                    if item.get("activity_type") == activity_filter
+                ]
+            items.extend(league_items)
+
+    items.sort(key=lambda item: item.get("timestamp") or "", reverse=True)
+    return {
+        "items": items,
+        "leagues": [
+            {"league_id": league["league_id"], "name": league.get("name") or league["league_id"]}
+            for league in leagues
+        ],
+        "filters": {"league_id": league_id, "activity_type": activity_filter, "weeks": weeks},
+        "warnings": warnings,
+    }
 
 
 @router.get("/league/{league_id}/roster")

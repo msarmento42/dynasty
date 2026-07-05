@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -89,6 +90,125 @@ async def fetch_transactions(league_id: str, round: int = 1) -> list[dict[str, A
     """Fetch Sleeper transactions for a league round."""
     data = await _get_json(f"/league/{league_id}/transactions/{round}")
     return data if isinstance(data, list) else []
+
+
+def _transaction_timestamp(transaction: dict[str, Any]) -> str | None:
+    created = transaction.get("created")
+    if created is None:
+        return None
+    try:
+        return datetime.fromtimestamp(int(created) / 1000, tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def _activity_type(transaction: dict[str, Any]) -> str:
+    raw_type = str(transaction.get("type") or "roster_move").lower()
+    if raw_type == "trade":
+        return "trade"
+    if raw_type == "waiver":
+        return "waiver"
+    return "roster_move"
+
+
+def _activity_label(activity_type: str, raw_type: str) -> str:
+    if activity_type == "trade":
+        return "Trade"
+    if activity_type == "waiver":
+        return "Waiver claim"
+    if raw_type == "free_agent":
+        return "Free agent move"
+    return "Roster move"
+
+
+def normalize_transactions(
+    league_id: str,
+    league_name: str,
+    transactions: list[dict[str, Any]],
+    roster_names: dict[int, str] | None = None,
+    player_names: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Normalize Sleeper transaction rows into a consistent activity feed shape."""
+    roster_names = roster_names or {}
+    player_names = player_names or {}
+    items: list[dict[str, Any]] = []
+
+    for transaction in transactions:
+        if not isinstance(transaction, dict):
+            continue
+        status = str(transaction.get("status") or "").lower()
+        if status and status not in {"complete", "completed"}:
+            continue
+
+        raw_type = str(transaction.get("type") or "roster_move").lower()
+        activity_type = _activity_type(transaction)
+        roster_ids = [
+            int(roster_id)
+            for roster_id in (transaction.get("roster_ids") or [])
+            if isinstance(roster_id, int) or str(roster_id).isdigit()
+        ]
+        teams = [
+            {"roster_id": roster_id, "name": roster_names.get(roster_id) or f"Team {roster_id}"}
+            for roster_id in roster_ids
+        ]
+
+        players: list[dict[str, Any]] = []
+        for action, player_map in (("add", transaction.get("adds")), ("drop", transaction.get("drops"))):
+            if not isinstance(player_map, dict):
+                continue
+            for player_id, roster_id in player_map.items():
+                try:
+                    roster_int = int(roster_id)
+                except (TypeError, ValueError):
+                    roster_int = None
+                player_key = str(player_id)
+                players.append({
+                    "player_id": player_key,
+                    "name": player_names.get(player_key) or player_key,
+                    "action": action,
+                    "roster_id": roster_int,
+                    "team_name": roster_names.get(roster_int) if roster_int is not None else None,
+                })
+
+        draft_picks = transaction.get("draft_picks")
+        if not isinstance(draft_picks, list):
+            draft_picks = []
+
+        tx_id = str(transaction.get("transaction_id") or transaction.get("id") or "")
+        items.append({
+            "id": f"{league_id}:{tx_id}" if tx_id else f"{league_id}:{len(items)}",
+            "transaction_id": tx_id,
+            "league_id": league_id,
+            "league_name": league_name,
+            "activity_type": activity_type,
+            "label": _activity_label(activity_type, raw_type),
+            "raw_type": raw_type,
+            "status": status or None,
+            "week": transaction.get("leg"),
+            "timestamp": _transaction_timestamp(transaction),
+            "teams_involved": teams,
+            "players_involved": players,
+            "draft_picks": draft_picks,
+        })
+
+    return items
+
+
+async def fetch_normalized_activity(
+    league_id: str,
+    league_name: str,
+    weeks_back: int = 4,
+    roster_names: dict[int, str] | None = None,
+    player_names: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch and normalize recent trade, waiver, and roster activity for a league."""
+    state = await fetch_nfl_state()
+    current_week = int(state.get("week") or 1)
+    start_week = max(1, current_week - max(1, min(int(weeks_back or 4), 8)) + 1)
+    transactions: list[dict[str, Any]] = []
+    for week in range(start_week, current_week + 1):
+        transactions.extend(await fetch_transactions(league_id, week))
+    return normalize_transactions(league_id, league_name, transactions, roster_names, player_names)
 
 
 async def fetch_trending(sport: str = "nfl", type: str = "add", limit: int = 25) -> list[dict[str, Any]]:
