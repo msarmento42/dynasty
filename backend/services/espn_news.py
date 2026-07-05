@@ -13,10 +13,54 @@ from backend.services.player_identity import espn_to_sleeper_map
 ESPN_NEWS_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/news"
 DEFAULT_TIMEOUT = 20.0
 
+POSITIVE_SENTIMENT_PHRASES = (
+    "activated",
+    "back at practice",
+    "back in",
+    "cleared",
+    "expected to play",
+    "full participant",
+    "good to go",
+    "named starter",
+    "practices in full",
+    "promoted",
+    "returns",
+    "ruled in",
+    "set to play",
+    "starter",
+    "starting",
+)
+
+NEGATIVE_SENTIMENT_PHRASES = (
+    "benched",
+    "doubtful",
+    "injured",
+    "injury",
+    "limited",
+    "misses practice",
+    "out for season",
+    "placed on ir",
+    "questionable",
+    "ruled out",
+    "season-ending",
+    "suspended",
+    "will not play",
+)
+
 
 def _article_categories(article: dict[str, Any]) -> list[dict[str, Any]]:
     categories = article.get("categories") or []
     return [category for category in categories if isinstance(category, dict)]
+
+
+def classify_news_sentiment(headline: str = "", detail: str = "") -> str:
+    """Classify news tone with explicit keyword rules; unknown text is neutral."""
+    text = f"{headline or ''} {detail or ''}".lower()
+    if any(phrase in text for phrase in NEGATIVE_SENTIMENT_PHRASES):
+        return "negative"
+    if any(phrase in text for phrase in POSITIVE_SENTIMENT_PHRASES):
+        return "positive"
+    return "neutral"
 
 
 def _normalize_article(article: dict[str, Any]) -> dict[str, Any]:
@@ -33,12 +77,16 @@ def _normalize_article(article: dict[str, Any]) -> dict[str, Any]:
         if athlete_name:
             athlete_names.append(str(athlete_name))
 
+    headline = article.get("headline") or ""
+    detail = article.get("description") or article.get("byline") or ""
+
     return {
-        "headline": article.get("headline") or "",
-        "detail": article.get("description") or article.get("byline") or "",
+        "headline": headline,
+        "detail": detail,
         "published_at": article.get("published") or article.get("lastModified") or "",
         "athlete_ids": athlete_ids,
         "athlete_names": athlete_names,
+        "sentiment": classify_news_sentiment(headline, detail),
     }
 
 
