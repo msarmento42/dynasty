@@ -2,6 +2,9 @@
 
 from collections import Counter
 
+IR_ELIGIBLE_STATUSES = {"IR", "INJURED RESERVE", "OUT", "PUP"}
+TAXI_EXCLUDED_POSITIONS = {"DEF", "K"}
+
 POSITION_TARGETS = {
     "sf": {"QB": 2, "RB": 3, "WR": 4, "TE": 1},
     "4qb": {"QB": 4, "RB": 3, "WR": 4, "TE": 1},
@@ -110,3 +113,70 @@ def grade_roster(players: list[dict], picks: list[dict], league_id: str) -> dict
             "position_counts": position_counts,
         },
     }
+
+
+def is_ir_eligible(player: dict) -> bool:
+    status = str(player.get("injury_status") or "").strip().upper()
+    return status in IR_ELIGIBLE_STATUSES or "INJURED RESERVE" in status
+
+
+def is_taxi_eligible(player: dict) -> bool:
+    position = str(player.get("position") or "").upper()
+    if position in TAXI_EXCLUDED_POSITIONS:
+        return False
+
+    years_exp = player.get("years_exp")
+    if years_exp is not None:
+        try:
+            return float(years_exp) <= 1
+        except (TypeError, ValueError):
+            pass
+
+    age = player.get("age")
+    try:
+        return float(age) <= 23
+    except (TypeError, ValueError):
+        return False
+
+
+def roster_slot_management_flags(
+    players: list[dict],
+    active_ids: set[str],
+    reserve_ids: set[str],
+    taxi_ids: set[str],
+    *,
+    reserve_slots: int = 0,
+    taxi_slots: int = 0,
+) -> list[dict]:
+    """Flag players who qualify for a non-active slot but are still active."""
+    flags = []
+    for player in players:
+        sleeper_id = str(player.get("sleeper_id") or "")
+        if not sleeper_id or sleeper_id not in active_ids:
+            continue
+
+        if reserve_slots > 0 and is_ir_eligible(player) and sleeper_id not in reserve_ids:
+            flags.append({
+                "player_id": sleeper_id,
+                "player_name": player.get("full_name") or player.get("name") or sleeper_id,
+                "position": player.get("position"),
+                "team": player.get("team"),
+                "current_slot": "active",
+                "recommended_slot": "IR",
+                "reason": f"{player.get('injury_status') or 'injured'} status is IR-eligible.",
+                "suggested_fix": f"Move {player.get('full_name') or player.get('name') or sleeper_id} to IR.",
+            })
+
+        if taxi_slots > 0 and is_taxi_eligible(player) and sleeper_id not in taxi_ids:
+            flags.append({
+                "player_id": sleeper_id,
+                "player_name": player.get("full_name") or player.get("name") or sleeper_id,
+                "position": player.get("position"),
+                "team": player.get("team"),
+                "current_slot": "active",
+                "recommended_slot": "Taxi",
+                "reason": "Rookie or young player profile is taxi-eligible.",
+                "suggested_fix": f"Move {player.get('full_name') or player.get('name') or sleeper_id} to a taxi slot.",
+            })
+
+    return flags
