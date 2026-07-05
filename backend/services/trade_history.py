@@ -1,5 +1,7 @@
 """Sleeper trade history ingestion, calibration, and manager profiling."""
 
+from __future__ import annotations
+
 import json
 from datetime import datetime, timezone
 from statistics import mean
@@ -10,6 +12,7 @@ from backend.database import DB_PATH
 from backend.services import sleeper
 
 POSITIONS = ("QB", "RB", "WR", "TE")
+TRADE_CLASSIFICATION_THRESHOLD = 200
 
 
 async def player_row(db: aiosqlite.Connection, sleeper_id: str) -> dict:
@@ -181,6 +184,55 @@ async def compute_calibration(league_id: str) -> None:
 
 def average(values: list[float], default: float = 1.0) -> float:
     return round(mean(values), 3) if values else default
+
+
+def classify_trade_delta(value_delta: int | float | None) -> str:
+    """Classify a trade from the side A perspective."""
+    delta = value_delta or 0
+    if delta > TRADE_CLASSIFICATION_THRESHOLD:
+        return "WINNER"
+    if delta < -TRADE_CLASSIFICATION_THRESHOLD:
+        return "LOSER"
+    return "FAIR"
+
+
+def opposite_classification(classification: str) -> str:
+    if classification == "WINNER":
+        return "LOSER"
+    if classification == "LOSER":
+        return "WINNER"
+    return "FAIR"
+
+
+def trade_value_analysis(side_a_total: int | float | None, side_b_total: int | float | None) -> dict:
+    """Return side A value delta plus mirrored FAIR/WINNER/LOSER labels."""
+    value_delta = round((side_a_total or 0) - (side_b_total or 0))
+    side_a_classification = classify_trade_delta(value_delta)
+    return {
+        "value_delta": value_delta,
+        "classification": side_a_classification,
+        "side_a_classification": side_a_classification,
+        "side_b_classification": opposite_classification(side_a_classification),
+    }
+
+
+def trade_leaderboard(trades: list[dict], limit: int = 5) -> dict:
+    """Surface the largest value wins and losses across classified trades."""
+    decisive_trades = [trade for trade in trades if trade.get("classification") != "FAIR"]
+    biggest_steals = sorted(
+        decisive_trades,
+        key=lambda trade: abs(trade.get("value_delta") or 0),
+        reverse=True,
+    )[:limit]
+    biggest_blunders = sorted(
+        decisive_trades,
+        key=lambda trade: abs(trade.get("value_delta") or 0),
+        reverse=True,
+    )[:limit]
+    return {
+        "biggest_steals": biggest_steals,
+        "biggest_blunders": biggest_blunders,
+    }
 
 
 async def values_by_position(db: aiosqlite.Connection, player_ids: list[str]) -> dict:

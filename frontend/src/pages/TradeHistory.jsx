@@ -33,8 +33,10 @@ function PosBadge({ pos }) {
   );
 }
 
-function VerdictBadge({ verdict, delta }) {
-  if (verdict === 'FAIR' || Math.abs(delta) < 100) {
+function VerdictBadge({ trade }) {
+  const classification = trade.classification || trade.verdict || 'FAIR';
+  const delta = trade.value_delta || 0;
+  if (classification === 'FAIR') {
     return (
       <span
         style={{
@@ -50,7 +52,7 @@ function VerdictBadge({ verdict, delta }) {
       </span>
     );
   }
-  const aWon = verdict === 'A_WON';
+  const winner = classification === 'WINNER' ? trade.side_a.owner_name : trade.side_b.owner_name;
   return (
     <span
       style={{
@@ -62,9 +64,39 @@ function VerdictBadge({ verdict, delta }) {
         padding: '4px 10px',
       }}
     >
-      {aWon ? 'A' : 'B'} won by {Number(Math.abs(delta)).toLocaleString()}
+      {winner} won by {Number(Math.abs(delta)).toLocaleString()}
     </span>
   );
+}
+
+function ClassificationBadge({ classification }) {
+  const palette = {
+    WINNER: { bg: '#d1fae5', color: '#065f46', label: 'WINNER' },
+    LOSER: { bg: '#fee2e2', color: '#991b1b', label: 'LOSER' },
+    FAIR: { bg: '#f3f4f6', color: '#374151', label: 'FAIR' },
+  }[classification || 'FAIR'];
+
+  return (
+    <span
+      style={{
+        background: palette.bg,
+        borderRadius: 4,
+        color: palette.color,
+        fontSize: 10,
+        fontWeight: 800,
+        marginLeft: 8,
+        padding: '2px 6px',
+      }}
+    >
+      {palette.label}
+    </span>
+  );
+}
+
+function oppositeClassification(classification) {
+  if (classification === 'WINNER') return 'LOSER';
+  if (classification === 'LOSER') return 'WINNER';
+  return 'FAIR';
 }
 
 function PlayerList({ players, picks }) {
@@ -150,7 +182,7 @@ function TradeCard({ trade }) {
           <span style={{ color: '#d1d5db' }}>·</span>
           <span style={{ color: '#9ca3af', fontSize: 12 }}>{dateStr}</span>
         </div>
-        <VerdictBadge verdict={trade.verdict} delta={trade.value_delta} />
+        <VerdictBadge trade={trade} />
       </div>
 
       {/* Sides */}
@@ -166,6 +198,7 @@ function TradeCard({ trade }) {
             }}
           >
             {trade.side_a.owner_name}
+            <ClassificationBadge classification={trade.side_a_classification || trade.classification} />
             <span
               style={{
                 background: '#e0f2fe',
@@ -213,6 +246,7 @@ function TradeCard({ trade }) {
             }}
           >
             {trade.side_b.owner_name}
+            <ClassificationBadge classification={trade.side_b_classification || oppositeClassification(trade.classification)} />
             <span
               style={{
                 background: '#e0f2fe',
@@ -237,8 +271,71 @@ function TradeCard({ trade }) {
   );
 }
 
+function LeaderboardColumn({ title, trades, emptyText }) {
+  return (
+    <div
+      style={{
+        background: 'var(--bg-card, #fff)',
+        border: '1px solid var(--border-color, #d9dee7)',
+        borderRadius: 8,
+        padding: 16,
+      }}
+    >
+      <h2 style={{ color: 'var(--text-primary, #1a1a2e)', fontSize: 16, margin: '0 0 12px' }}>
+        {title}
+      </h2>
+      {trades.length === 0 ? (
+        <p style={{ color: '#667085', fontSize: 13, margin: 0 }}>{emptyText}</p>
+      ) : (
+        <div style={{ display: 'grid', gap: 10 }}>
+          {trades.map((trade) => {
+            const winner = trade.classification === 'WINNER' ? trade.side_a.owner_name : trade.side_b.owner_name;
+            const loser = trade.classification === 'WINNER' ? trade.side_b.owner_name : trade.side_a.owner_name;
+            return (
+              <div
+                key={`${title}-${trade.transaction_id}`}
+                style={{
+                  borderBottom: '1px solid var(--border-color, #eef0f4)',
+                  paddingBottom: 10,
+                }}
+              >
+                <p style={{ color: '#111827', fontSize: 13, fontWeight: 700, margin: '0 0 4px' }}>
+                  {winner} over {loser}
+                </p>
+                <p style={{ color: '#667085', fontSize: 12, margin: 0 }}>
+                  Delta {Number(Math.abs(trade.value_delta || 0)).toLocaleString()}
+                  {trade.week ? ` · Week ${trade.week}` : ''}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TradeLeaderboard({ leaderboard }) {
+  if (!leaderboard) return null;
+  return (
+    <div style={{ display: 'grid', gap: 14, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', marginBottom: 16 }}>
+      <LeaderboardColumn
+        title="Biggest Steals"
+        trades={leaderboard.biggest_steals || []}
+        emptyText="No decisive winner trades yet."
+      />
+      <LeaderboardColumn
+        title="Biggest Blunders"
+        trades={leaderboard.biggest_blunders || []}
+        emptyText="No decisive losing trades yet."
+      />
+    </div>
+  );
+}
+
 export default function TradeHistory() {
   const [trades, setTrades] = useState(null);
+  const [leaderboard, setLeaderboard] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   // Renamed 'search' to 'playerSearch' for client-side filtering
@@ -264,10 +361,13 @@ export default function TradeHistory() {
       params.set('limit', '100');
       const res = await fetch(`/fantasy/league/${selectedLeagueId}/trade-history?${params}`);
       if (!res.ok) throw new Error('Unable to load trade history');
-      setTrades(await res.json());
+      const payload = await res.json();
+      setTrades(Array.isArray(payload) ? payload : payload.trades || []);
+      setLeaderboard(Array.isArray(payload) ? null : payload.leaderboard || null);
     } catch (err) {
       setError(err.message);
       setTrades(null);
+      setLeaderboard(null);
     } finally {
       setLoading(false);
     }
@@ -305,9 +405,12 @@ export default function TradeHistory() {
   // Derive unique team names for the team filter
   const uniqueTeams = useMemo(() => {
     if (!trades) return [];
-    // Assuming 'team_name' exists on each trade object as per instructions
-    const teams = [...new Set(trades.map(t => t.team_name))];
-    return teams.filter(Boolean).sort(); // Filter out any null/undefined team names
+    const teams = new Set();
+    trades.forEach((trade) => {
+      if (trade.side_a?.owner_name) teams.add(trade.side_a.owner_name);
+      if (trade.side_b?.owner_name) teams.add(trade.side_b.owner_name);
+    });
+    return [...teams].sort();
   }, [trades]);
 
   // Sort the trades array
@@ -351,7 +454,7 @@ export default function TradeHistory() {
     // Team filter
     if (selectedTeam) {
       currentFiltered = currentFiltered.filter(trade =>
-        trade.team_name === selectedTeam // Assuming trade object has team_name
+        trade.side_a.owner_name === selectedTeam || trade.side_b.owner_name === selectedTeam
       );
     }
 
@@ -404,11 +507,10 @@ export default function TradeHistory() {
 
   // Function to determine classification string
   const getClassification = (verdict, delta) => {
-    if (verdict === 'FAIR' || Math.abs(delta) < 100) {
-      return 'Even';
+    if (verdict === 'FAIR') {
+      return 'FAIR';
     }
-    const aWon = verdict === 'A_WON';
-    return `${aWon ? 'A' : 'B'} won by ${Number(Math.abs(delta)).toLocaleString()}`;
+    return `${verdict} by ${Number(Math.abs(delta)).toLocaleString()}`;
   };
 
   // Prepare data for CSV export
@@ -430,7 +532,7 @@ export default function TradeHistory() {
         'players/picks sent': formatAssetsForCsv(trade.side_b.players, trade.side_b.picks), // Side A received, so Side B sent
         'players/picks received': formatAssetsForCsv(trade.side_a.players, trade.side_a.picks), // Side A received
         'value delta': trade.value_delta,
-        classification: getClassification(trade.verdict, trade.value_delta),
+        classification: getClassification(trade.classification || trade.verdict, trade.value_delta),
       };
     });
   }, [filteredTrades, leagueId]);
@@ -661,11 +763,14 @@ export default function TradeHistory() {
         )}
 
         {filteredTrades && !loading && filteredTrades.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {filteredTrades.map((trade) => (
-              <TradeCard key={trade.transaction_id} trade={trade} />
-            ))}
-          </div>
+          <>
+            <TradeLeaderboard leaderboard={leaderboard} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {filteredTrades.map((trade) => (
+                <TradeCard key={trade.transaction_id} trade={trade} />
+              ))}
+            </div>
+          </>
         )}
       </section>
     </main>

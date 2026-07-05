@@ -37,6 +37,7 @@ from backend.services.fantasy_engine import (  # noqa: E402
 )
 from backend.services.recommendations import generate_football_recommendations  # noqa: E402
 from backend.services.proposals import generate_proposals  # noqa: E402
+from backend.services.trade_history import trade_leaderboard, trade_value_analysis  # noqa: E402
 from backend.services import data_trust  # noqa: E402
 from backend.services.espn_news import classify_news_sentiment  # noqa: E402
 from backend.services import sleeper as sleeper_svc  # noqa: E402
@@ -3011,13 +3012,7 @@ async def get_league_trade_history(
             sum(p["value"] for p in b_players) + sum(p["value"] for p in b_picks)
         )
 
-        value_delta = round(a_total - b_total)
-        if value_delta > 500:
-            verdict = "A_WON"
-        elif value_delta < -500:
-            verdict = "B_WON"
-        else:
-            verdict = "FAIR"
+        analysis = trade_value_analysis(a_total, b_total)
 
         output.append({
             "transaction_id": row[0],
@@ -3037,8 +3032,11 @@ async def get_league_trade_history(
                 "picks": b_picks,
                 "total_value": round(b_total),
             },
-            "value_delta": value_delta,
-            "verdict": verdict,
+            "value_delta": analysis["value_delta"],
+            "classification": analysis["classification"],
+            "side_a_classification": analysis["side_a_classification"],
+            "side_b_classification": analysis["side_b_classification"],
+            "verdict": analysis["classification"],
             "created_at": row[11],
         })
 
@@ -3051,7 +3049,10 @@ async def get_league_trade_history(
             or any(needle in p["name"].lower() for p in t["side_b"]["players"])
         ]
 
-    return output
+    return {
+        "trades": output,
+        "leaderboard": trade_leaderboard(output),
+    }
 
 
 # ---------------------------------------------------------------------------
