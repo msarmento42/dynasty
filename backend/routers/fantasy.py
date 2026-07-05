@@ -33,6 +33,8 @@ from backend.services.fantasy_engine import (  # noqa: E402
     player_value_trend,
     positional_scarcity_index,
     project_age_curve_values,
+    startup_adjusted_value,
+    startup_pick_value,
     trade_positional_impact,
 )
 from backend.services.recommendations import generate_football_recommendations  # noqa: E402
@@ -62,6 +64,8 @@ class TradeRequest(BaseModel):
     league_id: str
     side_a: TradeSide
     side_b: TradeSide
+    mode: str = "in-season"
+    draft_position: Optional[int] = None
 
 
 class SimulationAction(BaseModel):
@@ -329,6 +333,29 @@ def player_value(player: dict) -> float:
 def pick_request_value(pick: PickRequest, n_teams: int) -> int:
     current_year = datetime.now(timezone.utc).year
     return pick_value(pick.round, pick.year - current_year, n_teams)
+
+
+def trade_player_value(player: dict, mode: str) -> float:
+    if mode == "startup":
+        return float(player.get("startup_trade_value") or player.get("startup_adjusted_value") or 0)
+    return player_value(player)
+
+
+def apply_trade_mode_values(players: list[dict], league_id: str, mode: str, draft_position: int = None) -> list[dict]:
+    if mode != "startup":
+        for player in players:
+            player["trade_value"] = player_value(player)
+        return players
+
+    for index, player in enumerate(players):
+        position_context = (draft_position or 1) + index
+        startup_details = startup_adjusted_value(player, league_id, draft_position=position_context)
+        player["startup_trade_value"] = startup_details["startup_value"]
+        player["startup_delta"] = startup_details["startup_delta"]
+        player["startup_multiplier"] = startup_details["startup_multiplier"]
+        player["startup_context"] = startup_details["startup_context"]
+        player["trade_value"] = startup_details["startup_value"]
+    return players
 
 
 def position_totals(players: list[dict]) -> dict:
@@ -899,31 +926,49 @@ async def get_positional_scarcity(league_id: str):
 async def evaluate_trade(req: TradeRequest):
     """Evaluate a proposed trade - returns values, delta, and verdict."""
     league_id = req.league_id
+    mode = (req.mode or "in-season").lower()
+    if mode not in {"in-season", "startup"}:
+        raise HTTPException(status_code=400, detail="mode must be 'in-season' or 'startup'")
+
     cfg = LEAGUE_CONFIG.get(league_id, {})
     n_teams = cfg.get("n_teams", 12)
     current_year = datetime.now(timezone.utc).year
+    draft_position = max(1, int(req.draft_position or 1))
 
     async with aiosqlite.connect(DB_PATH) as db:
         trust = await data_trust.get_trust_status(db, league_id)
         side_a_players = await get_players_for_ids(db, req.side_a.player_ids, league_id)
         side_b_players = await get_players_for_ids(db, req.side_b.player_ids, league_id)
 
+    apply_trade_mode_values(side_a_players, league_id, mode, draft_position=draft_position)
+    apply_trade_mode_values(side_b_players, league_id, mode, draft_position=draft_position + len(side_a_players))
+
     side_a_picks = []
     for pk in req.side_a.picks:
-        val = pick_value(pk.round, pk.year - current_year, n_teams)
-        side_a_picks.append({"round": pk.round, "year": pk.year, "value": val})
+        years_away = pk.year - current_year
+        val = (
+            startup_pick_value(pk.round, years_away, n_teams, draft_position=draft_position)
+            if mode == "startup"
+            else pick_value(pk.round, years_away, n_teams)
+        )
+        side_a_picks.append({"round": pk.round, "year": pk.year, "value": val, "mode": mode})
 
     side_b_picks = []
     for pk in req.side_b.picks:
-        val = pick_value(pk.round, pk.year - current_year, n_teams)
-        side_b_picks.append({"round": pk.round, "year": pk.year, "value": val})
+        years_away = pk.year - current_year
+        val = (
+            startup_pick_value(pk.round, years_away, n_teams, draft_position=draft_position)
+            if mode == "startup"
+            else pick_value(pk.round, years_away, n_teams)
+        )
+        side_b_picks.append({"round": pk.round, "year": pk.year, "value": val, "mode": mode})
 
     side_a_value = (
-        sum(p.get("adjusted_value", 0) for p in side_a_players)
+        sum(trade_player_value(p, mode) for p in side_a_players)
         + sum(p["value"] for p in side_a_picks)
     )
     side_b_value = (
-        sum(p.get("adjusted_value", 0) for p in side_b_players)
+        sum(trade_player_value(p, mode) for p in side_b_players)
         + sum(p["value"] for p in side_b_picks)
     )
 
@@ -938,6 +983,8 @@ async def evaluate_trade(req: TradeRequest):
         verdict = "FAIR"
 
     result = {
+        "mode": mode,
+        "draft_position": draft_position if mode == "startup" else None,
         "side_a_value": side_a_value,
         "side_b_value": side_b_value,
         "delta": delta,

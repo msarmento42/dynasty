@@ -134,6 +134,56 @@ def adjusted_value(base_value: int, position: str, league_id: str) -> int:
     return int(value)
 
 
+def startup_adjusted_value(player: dict, league_id: str, draft_position: int = None) -> dict:
+    """
+    Return startup-draft calibrated value details for one enriched player.
+
+    Startup drafts overvalue long-term rookie insulation and early positional scarcity.
+    This keeps the normal in-season value intact and exposes a separate adjusted value
+    that callers can opt into with mode=startup.
+    """
+    position = (player.get("position") or "WR").upper()
+    base_value = float(player.get("adjusted_value") or player.get("value_sf") or player.get("value_1qb") or 0)
+    age = float(player.get("age") or 0)
+    config = LEAGUE_CONFIG.get(league_id, {})
+    base_format = config.get("base_format", "sf")
+    safe_pick = max(1, int(draft_position or 1))
+
+    rookie_multiplier = 1.0
+    if age and age <= 22:
+        rookie_multiplier = 1.22
+    elif age and age <= 23:
+        rookie_multiplier = 1.14
+
+    position_multiplier = {
+        "QB": 1.12 if base_format in ("sf", "4qb") else 1.02,
+        "WR": 1.08,
+        "TE": 1.04,
+        "RB": 0.94,
+    }.get(position, 1.0)
+
+    pick_window_multiplier = 1.0
+    if safe_pick <= 24:
+        pick_window_multiplier += {"QB": 0.08, "WR": 0.05, "TE": 0.03, "RB": -0.02}.get(position, 0.0)
+    elif safe_pick <= 60:
+        pick_window_multiplier += {"QB": 0.04, "WR": 0.03, "TE": 0.02, "RB": -0.01}.get(position, 0.0)
+
+    multiplier = max(0.75, rookie_multiplier * position_multiplier * pick_window_multiplier)
+    startup_value = round(base_value * multiplier)
+
+    return {
+        "startup_value": int(startup_value),
+        "startup_delta": int(startup_value - base_value),
+        "startup_multiplier": round(multiplier, 3),
+        "startup_context": {
+            "draft_position": safe_pick,
+            "rookie_multiplier": round(rookie_multiplier, 3),
+            "position_multiplier": round(position_multiplier, 3),
+            "pick_window_multiplier": round(pick_window_multiplier, 3),
+        },
+    }
+
+
 def qb_premium(player: dict, league_id: str):
     """Return QB value inflation details for Four Horsemen 4QB leagues."""
     config = LEAGUE_CONFIG.get(league_id, {})
@@ -173,6 +223,29 @@ def pick_value(round: int, years_away: int, n_teams: int) -> int:
     year_discount = 0.85 ** max(0, years_away)
     scarcity = math.sqrt(n_teams / 12)
     return int(base * year_discount * scarcity)
+
+
+def startup_pick_value(round: int, years_away: int, n_teams: int, draft_position: int = None) -> int:
+    """
+    Estimate pick value in startup-draft mode.
+
+    Picks become primary currency in startup rooms. Earlier picks and larger league
+    formats get a stronger premium while future-pick discounting remains intact.
+    """
+    base_value = pick_value(round, years_away, n_teams)
+    safe_pick = max(1, int(draft_position or 1))
+    if safe_pick <= 12:
+        slot_multiplier = 1.35
+    elif safe_pick <= 24:
+        slot_multiplier = 1.22
+    elif safe_pick <= 60:
+        slot_multiplier = 1.12
+    else:
+        slot_multiplier = 1.05
+
+    round_multiplier = {1: 1.18, 2: 1.10, 3: 1.04, 4: 1.0}.get(round, 0.95)
+    league_multiplier = 1 + min(0.12, max(0, n_teams - 12) * 0.015)
+    return int(base_value * slot_multiplier * round_multiplier * league_multiplier)
 
 
 # -- Positional impact ------------------------------------------------------
@@ -760,6 +833,10 @@ def enrich_player(player: dict, league_id: str) -> dict:
     enriched["career_stage"] = classify_career_stage(position, age) if age > 0 else "unknown"
     enriched["years_in_prime_remaining"] = years_in_prime_remaining(position, age) if age > 0 else 0.0
     enriched["trajectory"] = "+" if trend > 100 else ("-" if trend < -100 else "=")
+    startup_value = startup_adjusted_value(enriched, league_id)
+    enriched["startup_adjusted_value"] = startup_value["startup_value"]
+    enriched["startup_delta"] = startup_value["startup_delta"]
+    enriched["startup_multiplier"] = startup_value["startup_multiplier"]
     enriched["data_confidence"] = data_confidence(
         value=enriched["adjusted_value"],
         updated_at=enriched.get("updated_at"),

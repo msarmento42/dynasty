@@ -37,6 +37,31 @@ function SelectedList({ title, players, onRemove }) {
   );
 }
 
+function normalizeSearch(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function findBulkPlayers(input, rosters) {
+  const tokens = input
+    .split(/[\n,]+/)
+    .map(normalizeSearch)
+    .filter(Boolean);
+  const players = rosters.flatMap((roster) => roster.players || []);
+  const seen = new Set();
+
+  return tokens
+    .map((token) => players.find((player) => (
+      normalizeSearch(player.sleeper_id) === token
+      || normalizeSearch(player.name) === token
+      || normalizeSearch(player.full_name) === token
+    )))
+    .filter((player) => {
+      if (!player || seen.has(player.sleeper_id)) return false;
+      seen.add(player.sleeper_id);
+      return true;
+    });
+}
+
 function valuesForSide(result, key, fallbackPlayers) {
   const values = result?.[key] || result?.player_values?.[key] || [];
   if (Array.isArray(values) && values.length > 0) {
@@ -63,7 +88,13 @@ function ValueList({ title, players }) {
             <span>{player.name}</span>
             <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <ConfidenceBadge confidence={player.data_confidence} />
-              {Number(player.adjusted_value || player.value || 0).toLocaleString()}
+              {Number(player.trade_value || player.adjusted_value || player.value || 0).toLocaleString()}
+              {player.startup_delta ? (
+                <small style={{ color: player.startup_delta > 0 ? '#15803d' : '#b42318', fontWeight: 800 }}>
+                  {player.startup_delta > 0 ? '+' : ''}
+                  {Number(player.startup_delta).toLocaleString()}
+                </small>
+              ) : null}
             </span>
           </div>
         ))}
@@ -118,9 +149,13 @@ export default function TradeBuilder() {
   const [leagueId, setLeagueId] = useState('');
   const [allRosters, setAllRosters] = useState([]);
   const [opponentRosterId, setOpponentRosterId] = useState('');
+  const [mode, setMode] = useState('in-season');
+  const [draftPosition, setDraftPosition] = useState(1);
   const [scarcity, setScarcity] = useState(null);
   const [sideA, setSideA] = useState([]);
   const [sideB, setSideB] = useState([]);
+  const [bulkSideA, setBulkSideA] = useState('');
+  const [bulkSideB, setBulkSideB] = useState('');
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -132,6 +167,8 @@ export default function TradeBuilder() {
     setResult(null);
     setSideA([]);
     setSideB([]);
+    setBulkSideA('');
+    setBulkSideB('');
     setScarcity(null);
 
     try {
@@ -179,6 +216,15 @@ export default function TradeBuilder() {
     });
   }
 
+  function applyBulkPlayers(input, setInput, setSide) {
+    const matches = findBulkPlayers(input, allRosters);
+    setSide((current) => {
+      const existing = new Set(current.map((player) => player.sleeper_id));
+      return [...current, ...matches.filter((player) => !existing.has(player.sleeper_id))];
+    });
+    setInput('');
+  }
+
   async function evaluateTrade() {
     setLoading(true);
     setError('');
@@ -189,6 +235,8 @@ export default function TradeBuilder() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           league_id: leagueId,
+          mode,
+          draft_position: Number(draftPosition) || 1,
           side_a: { player_ids: sideA.map((player) => player.sleeper_id), picks: [] },
           side_b: { player_ids: sideB.map((player) => player.sleeper_id), picks: [] },
         }),
@@ -211,6 +259,58 @@ export default function TradeBuilder() {
         <h1 style={{ margin: 0 }}>Trade Builder</h1>
         <LeagueSelector onSelect={loadRosters} />
         {error && <p style={{ color: '#b42318' }}>{error}</p>}
+
+        <section
+          style={{
+            alignItems: 'center',
+            background: '#ffffff',
+            border: '1px solid #d9dee7',
+            borderRadius: 8,
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 14,
+            justifyContent: 'space-between',
+            padding: 14,
+          }}
+        >
+          <div style={{ display: 'flex', gap: 8 }}>
+            {[
+              ['in-season', 'In-Season'],
+              ['startup', 'Startup Draft'],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                onClick={() => {
+                  setMode(value);
+                  setResult(null);
+                }}
+                style={{
+                  background: mode === value ? '#111827' : '#f8fafc',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: 8,
+                  color: mode === value ? '#ffffff' : '#111827',
+                  cursor: 'pointer',
+                  fontWeight: 800,
+                  padding: '8px 12px',
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {mode === 'startup' && (
+            <label style={{ alignItems: 'center', display: 'flex', gap: 8, fontWeight: 700 }}>
+              Current pick
+              <input
+                min="1"
+                onChange={(event) => setDraftPosition(event.target.value)}
+                type="number"
+                value={draftPosition}
+                style={{ border: '1px solid #ccd2dc', borderRadius: 6, padding: '7px 9px', width: 86 }}
+              />
+            </label>
+          )}
+        </section>
 
         <div style={{ display: 'grid', gap: 20, gridTemplateColumns: 'minmax(0, 1.2fr) minmax(320px, 0.8fr)' }}>
           <section style={{ display: 'grid', gap: 16 }}>
@@ -267,6 +367,45 @@ export default function TradeBuilder() {
               players={sideB}
               onRemove={(id) => setSideB((players) => players.filter((player) => player.sleeper_id !== id))}
             />
+            {mode === 'startup' && (
+              <section style={{ background: '#ffffff', border: '1px solid #d9dee7', borderRadius: 8, padding: 16 }}>
+                <h2 style={{ marginTop: 0 }}>Bulk startup entry</h2>
+                <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+                  <label style={{ display: 'grid', gap: 8, fontWeight: 700 }}>
+                    You send
+                    <textarea
+                      onChange={(event) => setBulkSideA(event.target.value)}
+                      placeholder="Paste player names or Sleeper IDs"
+                      rows={5}
+                      value={bulkSideA}
+                      style={{ border: '1px solid #ccd2dc', borderRadius: 6, padding: 10 }}
+                    />
+                    <button
+                      onClick={() => applyBulkPlayers(bulkSideA, setBulkSideA, setSideA)}
+                      style={{ border: '1px solid #cbd5e1', borderRadius: 8, cursor: 'pointer', padding: 10 }}
+                    >
+                      Add send side
+                    </button>
+                  </label>
+                  <label style={{ display: 'grid', gap: 8, fontWeight: 700 }}>
+                    You receive
+                    <textarea
+                      onChange={(event) => setBulkSideB(event.target.value)}
+                      placeholder="Paste player names or Sleeper IDs"
+                      rows={5}
+                      value={bulkSideB}
+                      style={{ border: '1px solid #ccd2dc', borderRadius: 6, padding: 10 }}
+                    />
+                    <button
+                      onClick={() => applyBulkPlayers(bulkSideB, setBulkSideB, setSideB)}
+                      style={{ border: '1px solid #cbd5e1', borderRadius: 8, cursor: 'pointer', padding: 10 }}
+                    >
+                      Add receive side
+                    </button>
+                  </label>
+                </div>
+              </section>
+            )}
             <button
               disabled={loading || !leagueId || sideA.length === 0 || sideB.length === 0}
               onClick={evaluateTrade}
@@ -288,6 +427,7 @@ export default function TradeBuilder() {
               <p style={{ color: '#667085' }}>Select players from each side to evaluate a trade.</p>
             ) : (
               <div style={{ display: 'grid', gap: 14 }}>
+                <strong>{result.mode === 'startup' ? 'Startup Draft mode' : 'In-Season mode'}</strong>
                 <VerdictChip verdict={result.verdict} />
                 <ConfidenceBadge confidence={result.data_confidence} />
                 <strong>Side A: {Number(result.side_a_value || 0).toLocaleString()}</strong>
