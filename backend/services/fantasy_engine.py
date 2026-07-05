@@ -182,6 +182,10 @@ VALUE_TREND_BUY_THRESHOLD = 8.0
 VALUE_TREND_SELL_THRESHOLD = -8.0
 
 
+def _player_value(player: dict) -> float:
+    return float(player.get("adjusted_value") or player.get("value_sf") or player.get("value_1qb") or 0)
+
+
 def _parse_timestamp(value: str):
     if not value:
         return None
@@ -537,6 +541,97 @@ def positional_scarcity_index(teams: list[dict], positions: tuple = TRADE_POSITI
         })
 
     return result
+
+
+def find_trade_partner_buyers(target_player: dict, rosters: list[dict], limit: int = 8) -> list[dict]:
+    """
+    Rank managers who are most likely to need the target player's position.
+
+    Uses the same roster-value inputs as the team-needs surface: per-position
+    rostered dynasty value, player count depth, and league averages.
+    """
+    position = str(target_player.get("position") or "").upper()
+    if position not in TRADE_POSITIONS:
+        return []
+
+    position_rows = []
+    for roster in rosters:
+        players = roster.get("players", [])
+        position_players = [
+            player for player in players
+            if str(player.get("position") or "").upper() == position
+        ]
+        position_value = sum(_player_value(player) for player in position_players)
+        position_rows.append({
+            "roster": roster,
+            "players": sorted(position_players, key=_player_value, reverse=True),
+            "position_count": len(position_players),
+            "position_value": position_value,
+        })
+
+    if not position_rows:
+        return []
+
+    avg_value = sum(row["position_value"] for row in position_rows) / len(position_rows)
+    avg_count = sum(row["position_count"] for row in position_rows) / len(position_rows)
+    max_value = max((row["position_value"] for row in position_rows), default=0) or 1
+    target_value = _player_value(target_player)
+    ranked = []
+
+    for row in position_rows:
+        roster = row["roster"]
+        if roster.get("is_mine"):
+            continue
+        roster_player_ids = {
+            str(player.get("sleeper_id"))
+            for player in roster.get("players", [])
+            if player.get("sleeper_id") is not None
+        }
+        if str(target_player.get("sleeper_id")) in roster_player_ids:
+            continue
+
+        value_gap = max(0.0, avg_value - row["position_value"])
+        depth_gap = max(0.0, avg_count - row["position_count"])
+        low_value_score = (value_gap / max(avg_value, 1.0)) * 55
+        low_depth_score = min(25.0, depth_gap * 15)
+        target_fit_score = min(20.0, (target_value / max(max_value, target_value, 1.0)) * 20)
+        score = round(min(100.0, low_value_score + low_depth_score + target_fit_score), 1)
+
+        if score <= 0:
+            continue
+
+        top_players = row["players"][:3]
+        ranked.append({
+            "league_id": roster.get("league_id"),
+            "league_name": roster.get("league_name"),
+            "roster_id": roster.get("roster_id"),
+            "manager": roster.get("owner") or roster.get("team_name") or f"Team {roster.get('roster_id')}",
+            "position": position,
+            "score": score,
+            "position_value": round(row["position_value"]),
+            "league_avg_position_value": round(avg_value),
+            "position_count": row["position_count"],
+            "league_avg_position_count": round(avg_count, 1),
+            "value_gap": round(value_gap),
+            "depth_gap": round(depth_gap, 1),
+            "top_position_players": [
+                {
+                    "sleeper_id": player.get("sleeper_id"),
+                    "name": player.get("name"),
+                    "team": player.get("team"),
+                    "value": round(_player_value(player)),
+                }
+                for player in top_players
+            ],
+            "reason": (
+                f"{position} value is {round(value_gap):,} below league average"
+                if value_gap > 0
+                else f"{position} depth is below league average"
+            ),
+        })
+
+    ranked.sort(key=lambda item: item["score"], reverse=True)
+    return ranked[: max(1, int(limit or 8))]
 
 
 # -- Strength of schedule ---------------------------------------------------

@@ -28,6 +28,7 @@ from backend.services.fantasy_engine import (  # noqa: E402
     compute_schedule_sos,
     compute_player_comps,
     enrich_player,
+    find_trade_partner_buyers,
     pick_value,
     player_value_trend,
     positional_scarcity_index,
@@ -1681,6 +1682,119 @@ async def build_player_career_comps(db: aiosqlite.Connection, player: dict, limi
 
     await db.commit()
     return payload
+
+
+async def _trade_partner_leagues(db: aiosqlite.Connection, league_id: Optional[str]) -> list[dict]:
+    if league_id:
+        return [await get_league_row(db, league_id)]
+
+    async with db.execute(
+        "SELECT league_id, name, n_teams, format, my_roster_id, config_json FROM leagues"
+    ) as cur:
+        rows = await cur.fetchall()
+
+    if rows:
+        return [
+            {
+                "league_id": row[0],
+                "name": row[1],
+                "n_teams": row[2],
+                "format": row[3],
+                "my_roster_id": row[4],
+                "config": json.loads(row[5] or "{}"),
+            }
+            for row in rows
+        ]
+
+    return [
+        {
+            "league_id": lid,
+            "name": cfg["name"],
+            "n_teams": cfg["n_teams"],
+            "format": cfg.get("base_format", "sf"),
+            "my_roster_id": cfg.get("my_roster_id", 1),
+            "config": cfg,
+        }
+        for lid, cfg in LEAGUE_CONFIG.items()
+    ]
+
+
+@router.get("/players/{player_id}/potential-buyers")
+async def get_player_potential_buyers(
+    player_id: str,
+    response: Response,
+    league_id: Optional[str] = None,
+    limit: int = 8,
+):
+    """Return managers whose rosters are weakest at this player's position."""
+    response.headers["Cache-Control"] = PLAYER_VALUE_CACHE_CONTROL
+    requested_limit = max(1, min(int(limit or 8), 12))
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT sleeper_id, name, position, team, age, value_sf, value_1qb, "
+            "trend_30d, injury_status, depth_chart_order "
+            "FROM players WHERE sleeper_id = ?",
+            (player_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Player {player_id} not found.")
+
+        target_base = {
+            "sleeper_id": row[0],
+            "name": row[1],
+            "position": row[2],
+            "team": row[3],
+            "age": row[4],
+            "value_sf": row[5] or 0,
+            "value_1qb": row[6] or 0,
+            "trend_30d": row[7] or 0,
+            "injury_status": row[8],
+            "depth_chart_order": row[9],
+        }
+        leagues = await _trade_partner_leagues(db, league_id)
+        buyers = []
+
+        for league in leagues:
+            lid = str(league["league_id"])
+            my_roster_id = league["config"].get("my_roster_id", league["my_roster_id"])
+            async with db.execute(
+                "SELECT roster_id, owner_display_name, player_ids_json "
+                "FROM rosters WHERE league_id=? ORDER BY roster_id",
+                (lid,),
+            ) as cur:
+                roster_rows = await cur.fetchall()
+            if not roster_rows:
+                continue
+
+            rosters = []
+            for roster_id, owner, player_ids_json in roster_rows:
+                players = await get_players_for_ids(db, json.loads(player_ids_json or "[]"), lid)
+                rosters.append({
+                    "league_id": lid,
+                    "league_name": league.get("name") or lid,
+                    "roster_id": roster_id,
+                    "owner": owner or f"Team {roster_id}",
+                    "is_mine": roster_id == my_roster_id,
+                    "players": players,
+                })
+
+            buyers.extend(find_trade_partner_buyers(
+                enrich_player(target_base, lid),
+                rosters,
+                limit=requested_limit,
+            ))
+
+    buyers.sort(key=lambda item: item["score"], reverse=True)
+    return {
+        "player": {
+            "sleeper_id": target_base["sleeper_id"],
+            "name": target_base["name"],
+            "position": target_base["position"],
+        },
+        "league_id": league_id,
+        "buyers": buyers[:requested_limit],
+    }
 
 
 @router.get("/players/{player_id}/career-comps")
