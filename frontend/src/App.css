@@ -293,3 +293,64 @@ a {
     grid-template-columns: 1fr;
   }
 }
+
+
+/* TradeBuilder Page Responsive Styles */
+.trade-builder-container {
+  display: grid;
+  gap: 22px;
+  margin: 0 auto;
+  max-width: 1180px;
+}
+
+.trade-builder-mode-selector {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d9dee7;
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: space-between;
+  padding: 14px;
+}
+
+.trade-builder-grid {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+}
+
+@media (max-width: 960px) {
+  .trade-builder-container {
+    max-width: 100%;
+    padding: 0 16px;
+  }
+
+  .trade-builder-grid {
+    grid-template-columns: 1fr; /* Stack columns */
+  }
+}
+
+@media (max-width: 640px) {
+  .trade-builder-mode-selector {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .trade-builder-mode-selector > div { /* Target the div containing mode buttons */
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+  }
+  .trade-builder-mode-selector label { /* Target the label for current pick */
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+  }
+  .trade-builder-mode-selector input[type="number"] {
+    width: 80px !important; /* Override inline width */
+  }
+}
