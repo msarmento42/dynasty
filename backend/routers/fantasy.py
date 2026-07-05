@@ -23,6 +23,7 @@ from backend.scripts import daily_sync  # noqa: E402
 from backend.services.fantasy_engine import (  # noqa: E402
     LEAGUE_CONFIG,
     aggregate_confidence,
+    compute_schedule_sos,
     enrich_player,
     pick_value,
     player_value_trend,
@@ -210,6 +211,81 @@ async def attach_usage_summaries(db: aiosqlite.Connection, players: list[dict]) 
     for player in players:
         usage_rows = list(reversed(by_player.get(str(player.get("sleeper_id")), [])[:4]))
         player["usage_trend"] = usage_trend_payload(usage_rows)
+
+
+async def build_schedule_sos(player: dict, weeks: int = 4) -> dict:
+    """Return an SOS payload for one player without failing the caller on missing Sleeper data."""
+    try:
+        state = await sleeper_svc.fetch_nfl_state()
+        season = int(state.get("season") or datetime.now(timezone.utc).year)
+        current_week = int(state.get("week") or 1)
+        defensive_allowed = await sleeper_svc.fetch_defensive_points_allowed_by_position(
+            season=season,
+            through_week=current_week,
+        )
+        opponents = await sleeper_svc.fetch_upcoming_opponents(player.get("team"), weeks=max(weeks, 8))
+    except Exception as exc:  # pragma: no cover - network/service availability guard
+        return {
+            "available": False,
+            "reason": f"Sleeper schedule data unavailable: {exc}",
+            "sos_score": None,
+            "sos_label": "Unavailable",
+            "opponents": [],
+        }
+    return compute_schedule_sos(player, opponents, defensive_allowed, weeks=weeks)
+
+
+async def attach_schedule_sos_summaries(players: list[dict], weeks: int = 4) -> None:
+    """Attach compact schedule SOS data to roster players."""
+    if not players:
+        return
+
+    try:
+        state = await sleeper_svc.fetch_nfl_state()
+        season = int(state.get("season") or datetime.now(timezone.utc).year)
+        current_week = int(state.get("week") or 1)
+        defensive_allowed = await sleeper_svc.fetch_defensive_points_allowed_by_position(
+            season=season,
+            through_week=current_week,
+        )
+        teams = sorted({str(player.get("team")).upper() for player in players if player.get("team")})
+        team_opponents = await asyncio.gather(*[
+            sleeper_svc.fetch_upcoming_opponents(team, weeks=max(weeks, 8))
+            for team in teams
+        ])
+        opponents_by_team = dict(zip(teams, team_opponents))
+    except Exception:
+        for player in players:
+            player["schedule_sos"] = {
+                "available": False,
+                "sos_score": None,
+                "sos_label": "Unavailable",
+                "opponents": [],
+            }
+        return
+
+    for player in players:
+        team = str(player.get("team") or "").upper()
+        payload = compute_schedule_sos(
+            player,
+            opponents_by_team.get(team, []),
+            defensive_allowed,
+            weeks=weeks,
+        )
+        player["schedule_sos"] = {
+            "available": payload.get("available", False),
+            "sos_score": payload.get("sos_score"),
+            "sos_label": payload.get("sos_label"),
+            "opponents": [
+                {
+                    "week": item.get("week"),
+                    "opponent": item.get("opponent"),
+                    "matchup_score": item.get("matchup_score"),
+                    "matchup_label": item.get("matchup_label"),
+                }
+                for item in payload.get("opponents", [])[:weeks]
+            ],
+        }
 
 
 def player_value(player: dict) -> float:
@@ -547,6 +623,7 @@ async def get_my_roster(league_id: str):
         players = await get_players_for_ids(db, player_ids, league_id)
         await attach_usage_summaries(db, players)
 
+    await attach_schedule_sos_summaries(players, weeks=4)
     players.sort(key=lambda p: p.get("adjusted_value", 0), reverse=True)
     total = sum(p.get("adjusted_value", 0) for p in players)
 
@@ -1325,6 +1402,7 @@ async def get_player_profile(player_id: str, response: Response):
             for trend_row in trend_rows
         ])
         usage_trend = await get_usage_for_player(db, player_id)
+        schedule_sos = await build_schedule_sos(p, weeks=8)
 
         # Comparable players: same position, similar value (within ±15%)
         value_target = player_value or 1
@@ -1369,8 +1447,35 @@ async def get_player_profile(player_id: str, response: Response):
         "breakout_score": breakout_score,
         "value_trend": value_trend,
         "usage_trend": usage_trend,
+        "schedule_sos": schedule_sos,
         "recent_stats": recent_stats,
         "comparable_players": comparable_players,
+    }
+
+
+@router.get("/players/{player_id}/schedule-sos")
+async def get_player_schedule_sos(player_id: str, response: Response, weeks: int = 8):
+    """Return a player's upcoming opponent list and 0-100 strength-of-schedule score."""
+    response.headers["Cache-Control"] = PLAYER_VALUE_CACHE_CONTROL
+    requested_weeks = max(1, min(int(weeks or 8), 8))
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT sleeper_id, name, position, team FROM players WHERE sleeper_id = ?",
+            (player_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Player {player_id} not found.")
+
+    player = {
+        "sleeper_id": row[0],
+        "name": row[1],
+        "position": row[2],
+        "team": row[3],
+    }
+    return {
+        **player,
+        **await build_schedule_sos(player, weeks=requested_weeks),
     }
 
 

@@ -468,6 +468,109 @@ def positional_scarcity_index(teams: list[dict], positions: tuple = TRADE_POSITI
     return result
 
 
+# -- Strength of schedule ---------------------------------------------------
+
+def _sos_label(score: int) -> str:
+    if score >= 70:
+        return "Favorable"
+    if score >= 45:
+        return "Neutral"
+    return "Difficult"
+
+
+def compute_schedule_sos(
+    player: dict,
+    opponents: list[dict],
+    defensive_allowed: dict[str, dict],
+    weeks: int = 4,
+) -> dict:
+    """Compute a 0-100 upcoming schedule score for a player."""
+    position = str(player.get("position") or "").upper()
+    requested_weeks = max(1, min(int(weeks or 4), 8))
+    upcoming = opponents[:requested_weeks]
+
+    position_values = [
+        float(team_stats.get(position, {}).get("avg_points_allowed"))
+        for team_stats in defensive_allowed.values()
+        if team_stats.get(position, {}).get("avg_points_allowed") is not None
+    ]
+    if position not in TRADE_POSITIONS:
+        return {
+            "available": False,
+            "reason": "Schedule scoring is only available for QB, RB, WR, and TE.",
+            "sos_score": None,
+            "sos_label": "Unavailable",
+            "opponents": upcoming,
+        }
+    if not upcoming:
+        return {
+            "available": False,
+            "reason": "Upcoming opponent data is not available from Sleeper yet.",
+            "sos_score": None,
+            "sos_label": "Unavailable",
+            "opponents": [],
+        }
+    if not position_values:
+        return {
+            "available": False,
+            "reason": "Defensive points-allowed data is not available from Sleeper weekly stats yet.",
+            "sos_score": None,
+            "sos_label": "Unavailable",
+            "opponents": upcoming,
+        }
+
+    league_avg = sum(position_values) / len(position_values)
+    spread = max(position_values) - min(position_values)
+    if spread <= 0:
+        spread = max(league_avg, 1.0)
+
+    matchup_rows = []
+    score_total = 0.0
+    scored_games = 0
+    for item in upcoming:
+        opponent = str(item.get("opponent") or "").upper()
+        allowed_payload = defensive_allowed.get(opponent, {}).get(position, {})
+        allowed = allowed_payload.get("avg_points_allowed")
+        if allowed is None:
+            matchup_score = None
+            matchup_label = "Unknown"
+        else:
+            matchup_score = round(max(0, min(100, 50 + ((float(allowed) - league_avg) / spread) * 50)))
+            matchup_label = _sos_label(matchup_score)
+            score_total += matchup_score
+            scored_games += 1
+
+        matchup_rows.append({
+            **item,
+            "position": position,
+            "avg_points_allowed": allowed,
+            "sample_size": allowed_payload.get("sample_size"),
+            "matchup_score": matchup_score,
+            "matchup_label": matchup_label,
+        })
+
+    if scored_games == 0:
+        return {
+            "available": False,
+            "reason": "No upcoming opponents have defensive points-allowed data yet.",
+            "sos_score": None,
+            "sos_label": "Unavailable",
+            "opponents": matchup_rows,
+        }
+
+    score = round(score_total / scored_games)
+    return {
+        "available": True,
+        "reason": None,
+        "sos_score": score,
+        "sos_label": _sos_label(score),
+        "position": position,
+        "weeks": requested_weeks,
+        "league_average_points_allowed": round(league_avg, 2),
+        "opponents": matchup_rows,
+    }
+
+
 # -- Player enrichment ------------------------------------------------------
 
 def enrich_player(player: dict, league_id: str) -> dict:

@@ -41,6 +41,13 @@ function formatPercent(value) {
   return `${Math.round(Number(value) * 100)}%`;
 }
 
+function sosColor(score) {
+  if (score === null || score === undefined) return { background: '#f2f4f7', color: '#475467' };
+  if (Number(score) >= 70) return { background: '#dcfce7', color: '#166534' };
+  if (Number(score) >= 45) return { background: '#fef9c3', color: '#854d0e' };
+  return { background: '#fee2e2', color: '#991b1b' };
+}
+
 // --- Skeleton Components Start ---
 const Skeleton = ({ width, height, borderRadius = 4, style = {} }) => (
   <div
@@ -191,6 +198,8 @@ export default function PlayerProfile() {
   const [valueTrendError, setValueTrendError] = useState('');
   const [usageTrend, setUsageTrend] = useState(null);
   const [usageTrendError, setUsageTrendError] = useState('');
+  const [scheduleSos, setScheduleSos] = useState(null);
+  const [scheduleSosError, setScheduleSosError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -204,6 +213,8 @@ export default function PlayerProfile() {
     setValueTrendError('');
     setUsageTrend(null);
     setUsageTrendError('');
+    setScheduleSos(null);
+    setScheduleSosError('');
     fetch(`/fantasy/players/${playerId}/profile`)
       .then((res) => {
         if (!res.ok) throw new Error(`Player not found (${res.status})`);
@@ -213,6 +224,7 @@ export default function PlayerProfile() {
         setPlayer(data);
         setValueTrend(data.value_trend || null);
         setUsageTrend(data.usage_trend || null);
+        setScheduleSos(data.schedule_sos || null);
         setLoading(false);
       })
       .catch((err) => {
@@ -235,6 +247,14 @@ export default function PlayerProfile() {
       })
       .then((data) => setUsageTrend(data))
       .catch((err) => setUsageTrendError(err.message));
+
+    fetch(`/fantasy/players/${playerId}/schedule-sos?weeks=8`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Schedule SOS unavailable (${res.status})`);
+        return res.json();
+      })
+      .then((data) => setScheduleSos(data))
+      .catch((err) => setScheduleSosError(err.message));
 
     fetch(`/fantasy/players/${playerId}/age-curve-projection`)
       .then((res) => {
@@ -415,6 +435,88 @@ export default function PlayerProfile() {
             {ageProjectionError && (
               <p style={{ color: '#b42318', margin: '-8px 0 0' }}>{ageProjectionError}</p>
             )}
+
+            <section
+              style={{
+                background: '#ffffff',
+                border: '1px solid #d9dee7',
+                borderRadius: 10,
+                padding: 20,
+              }}
+            >
+              <div
+                style={{
+                  alignItems: 'flex-start',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 16,
+                  marginBottom: 14,
+                }}
+              >
+                <div>
+                  <h2 style={{ margin: 0 }}>Schedule Difficulty</h2>
+                  <p style={{ color: '#667085', margin: '4px 0 0' }}>
+                    Next eight opponents scored from defensive fantasy points allowed to {player.position}.
+                  </p>
+                </div>
+                <span
+                  style={{
+                    ...sosColor(scheduleSos?.sos_score),
+                    borderRadius: 999,
+                    fontSize: 12,
+                    fontWeight: 800,
+                    padding: '5px 10px',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {scheduleSos?.sos_score != null
+                    ? `${scheduleSos.sos_score}/100 ${scheduleSos.sos_label}`
+                    : 'Unavailable'}
+                </span>
+              </div>
+              {scheduleSosError && <p style={{ color: '#b42318' }}>{scheduleSosError}</p>}
+              {scheduleSos?.opponents?.length > 0 ? (
+                <div
+                  style={{
+                    display: 'grid',
+                    gap: 10,
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(92px, 1fr))',
+                  }}
+                >
+                  {scheduleSos.opponents.map((matchup) => {
+                    const colors = sosColor(matchup.matchup_score);
+                    return (
+                      <article
+                        key={`${matchup.season}-${matchup.week}-${matchup.opponent}`}
+                        style={{
+                          ...colors,
+                          borderRadius: 8,
+                          padding: 12,
+                          textAlign: 'center',
+                        }}
+                        title={
+                          matchup.avg_points_allowed != null
+                            ? `${matchup.avg_points_allowed} points allowed to ${player.position}`
+                            : 'No defensive sample yet'
+                        }
+                      >
+                        <div style={{ fontSize: 12, fontWeight: 700 }}>W{matchup.week}</div>
+                        <strong style={{ display: 'block', fontSize: 18, marginTop: 4 }}>
+                          {matchup.opponent || 'BYE'}
+                        </strong>
+                        <div style={{ fontSize: 12, fontWeight: 700, marginTop: 4 }}>
+                          {matchup.matchup_score != null ? matchup.matchup_score : '--'}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p style={{ color: '#667085', margin: 0 }}>
+                  {scheduleSos?.reason || 'Upcoming schedule data is not available yet.'}
+                </p>
+              )}
+            </section>
 
             <section
               style={{

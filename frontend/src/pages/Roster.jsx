@@ -25,6 +25,13 @@ function formatCacheAge(cacheAgeSeconds) {
   return `${Math.floor(minutes / 60)}h ago`;
 }
 
+function sosColor(score) {
+  if (score === null || score === undefined) return { background: '#f2f4f7', color: '#475467' };
+  if (Number(score) >= 70) return { background: '#dcfce7', color: '#166534' };
+  if (Number(score) >= 45) return { background: '#fef9c3', color: '#854d0e' };
+  return { background: '#fee2e2', color: '#991b1b' };
+}
+
 // Helper for localStorage
 const localStorageKeys = {
   globalThreshold: 'globalValueAlertThreshold',
@@ -650,6 +657,21 @@ export default function Roster() {
                         Value{' '}
                         {sortColumn === 'adjusted_value' && (sortDirection === 'asc' ? '▲' : '▼')}
                       </th>
+                      <th
+                        style={{
+                          padding: '12px 16px',
+                          textAlign: 'left',
+                          borderBottom: '1px solid #eaecf0',
+                          fontWeight: 600,
+                          color: '#475467',
+                          fontSize: 12,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        SOS
+                      </th>
                       {/* New column for Alert Threshold */}
                       <th
                         style={{
@@ -674,6 +696,8 @@ export default function Roster() {
                         ? playerThresholds[player.sleeper_id]
                         : globalThreshold;
                       const isAlerted = triggeredAlerts.some(alert => alert.player.sleeper_id === player.sleeper_id);
+                      const sos = player.schedule_sos || {};
+                      const sosColors = sosColor(sos.sos_score);
 
                       return (
                         <tr
@@ -695,6 +719,24 @@ export default function Roster() {
                           </td>
                           <td style={{ padding: '12px 16px', textAlign: 'right', borderBottom: '1px solid #eaecf0', color: '#101828', fontSize: 14, fontWeight: 500 }}>
                             {Number(player.adjusted_value || 0).toLocaleString()}
+                          </td>
+                          <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
+                            <span
+                              title={(sos.opponents || [])
+                                .map((matchup) => `W${matchup.week}: ${matchup.opponent || 'BYE'} (${matchup.matchup_score ?? '--'})`)
+                                .join(', ') || 'Schedule data unavailable'}
+                              style={{
+                                ...sosColors,
+                                borderRadius: 999,
+                                display: 'inline-flex',
+                                fontSize: 12,
+                                fontWeight: 800,
+                                padding: '4px 8px',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {sos.sos_score != null ? `${sos.sos_score} ${sos.sos_label}` : 'SOS N/A'}
+                            </span>
                           </td>
                           {/* Alert Threshold Input */}
                           <td style={{ padding: '8px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
