@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { LevelBadge, PosBadge } from './BaseballHome.jsx';
+import StatcastPercentileChart from '../../components/StatcastPercentileChart.jsx';
 
 const API = import.meta.env.VITE_API_URL || '';
 
@@ -28,6 +29,16 @@ export default function PlayerPage() {
   const [error, setError] = useState('');
   const [addStatus, setAddStatus] = useState('');
   const [adding, setAdding] = useState(false);
+
+  // Dummy Statcast data for demonstration
+  const dummyStatcastData = [
+    { metricName: 'xwOBA', percentileValue: 85 },
+    { metricName: 'Barrel%', percentileValue: 70 },
+    { metricName: 'Sprint Speed', percentileValue: 92 },
+    { metricName: 'Hard Hit%', percentileValue: 65 },
+    { metricName: 'K%', percentileValue: 40 },
+    { metricName: 'BB%', percentileValue: 75 },
+  ];
 
   useEffect(() => {
     const load = async () => {
@@ -160,6 +171,9 @@ export default function PlayerPage() {
             </div>
           </div>
         </div>
+
+        {/* Statcast Percentiles */}
+        <StatcastPercentileChart metrics={dummyStatcastData} />
 
         {/* Level progression */}
         {progressionLevels.length > 0 && (
