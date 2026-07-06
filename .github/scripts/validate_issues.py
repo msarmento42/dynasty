@@ -16,7 +16,11 @@ REQUIRED = [
     ("Blocked paths", r"\*\*Blocked paths:\*\*"),
     ("Implementation instructions", r"\*\*Implementation instructions:\*\*"),
     ("Acceptance criteria", r"- \[ \]\s*\S"),
-    ("Verification command", r"\*\*Verification command:\*\*\s*```(?:bash|shell|sh)?\s*\n\s*\S[\s\S]*?\n```"),
+    (
+        "Verification command",
+        r"\*\*Verification command:\*\*\s*"
+        r"(```(?:bash|shell|sh)?\s*\n\s*\S[\s\S]*?\n```|`[^`\n]+`)",
+    ),
     ("Rollback plan", r"\*\*Rollback plan:\*\*\s*\S"),
     ("Risk level", r"\*\*Risk level:\*\*\s*(LOW|MEDIUM|HIGH)"),
     ("Auto-merge allowed", r"\*\*Auto-merge allowed:\*\*\s*(yes|no)"),
@@ -49,7 +53,15 @@ def list_section(body, heading):
 def verification_command(body):
     raw = section(body, "Verification command")
     match = re.search(r"```(?:bash|shell|sh)?\s*\n(.*?)\n```", raw, re.I | re.S)
-    return (match.group(1) if match else raw).strip()
+    if match:
+        return match.group(1).strip()
+    # Inline single-backtick style: `npm run build && grep -q ...`
+    # (accepted as a fallback so authors don't dead-letter on formatting alone --
+    # see agios-control#35).
+    inline = re.match(r"^`([^`\n]+)`\s*$", raw.strip())
+    if inline:
+        return inline.group(1).strip()
+    return raw.strip()
 
 
 def problems_for(title, body):
