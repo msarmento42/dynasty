@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import AuctionValueCalculator from '../components/AuctionValueCalculator';
 
 const POSITION_COLORS = {
   QB: '#dc2626',
@@ -283,6 +284,7 @@ export default function PickCalculator() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [valuesLoading, setValuesLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('pick'); // New state for tabs
 
   useEffect(() => {
     async function loadValues() {
@@ -367,111 +369,156 @@ export default function PickCalculator() {
     <main style={{ background: '#f6f7fb', minHeight: '100vh', padding: 24 }}>
       <section style={{ margin: '0 auto', maxWidth: 1100 }}>
         <div style={{ marginBottom: 20 }}>
-          <h1 style={{ margin: '0 0 6px' }}>Pick Value Calculator</h1>
-          <p style={{ color: '#667085', margin: 0 }}>
-            Compare dynasty trade sides with draft picks and players. Values are KTC-equivalent.
-          </p>
-        </div>
-
-        {error && <p style={{ color: '#b42318', marginBottom: 12 }}>{error}</p>}
-
-        <div style={{ display: 'grid', gap: 16, gridTemplateColumns: '1fr 1fr', marginBottom: 20 }}>
-          <TradePanel
-            label="Side A"
-            sideKey="side_a"
-            items={sideA}
-            onAddItem={addToSide(setSideA)}
-            onRemoveItem={removeFromSide(setSideA)}
-            pickValues={pickValues}
-            total={sideATotal}
-            winner={winner}
-          />
-          <TradePanel
-            label="Side B"
-            sideKey="side_b"
-            items={sideB}
-            onAddItem={addToSide(setSideB)}
-            onRemoveItem={removeFromSide(setSideB)}
-            pickValues={pickValues}
-            total={sideBTotal}
-            winner={winner}
-          />
-        </div>
-
-        {(sideA.length > 0 || sideB.length > 0) && (
-          <div style={{ background: '#ffffff', border: '1px solid #d9dee7', borderRadius: 10, padding: '16px 20px' }}>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-                <div>
-                  <div style={{ color: '#667085', fontSize: 12, fontWeight: 600, marginBottom: 2, textTransform: 'uppercase' }}>Side A Total</div>
-                  <div style={{ fontSize: 22, fontWeight: 800, color: '#1d4ed8' }}>{Number(sideATotal).toLocaleString()}</div>
-                </div>
-                <div style={{ alignSelf: 'center', color: '#94a3b8', fontSize: 20, fontWeight: 300 }}>vs</div>
-                <div>
-                  <div style={{ color: '#667085', fontSize: 12, fontWeight: 600, marginBottom: 2, textTransform: 'uppercase' }}>Side B Total</div>
-                  <div style={{ fontSize: 22, fontWeight: 800, color: '#1d4ed8' }}>{Number(sideBTotal).toLocaleString()}</div>
-                </div>
-                <div>
-                  <div style={{ color: '#667085', fontSize: 12, fontWeight: 600, marginBottom: 2, textTransform: 'uppercase' }}>Delta</div>
-                  <div style={{ fontSize: 22, fontWeight: 800, color: delta >= 0 ? '#15803d' : '#b42318' }}>
-                    {delta >= 0 ? '+' : ''}{Number(delta).toLocaleString()}
-                    <span style={{ fontSize: 13, fontWeight: 600, marginLeft: 4 }}>({deltaPct}%)</span>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                {winner === 'even' && (
-                  <span style={{ background: '#f1f5f9', borderRadius: 8, color: '#475467', fontSize: 15, fontWeight: 700, padding: '8px 18px' }}>
-                    Even Trade
-                  </span>
-                )}
-                {winner === 'side_a' && (
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ background: '#dcfce7', borderRadius: 8, color: '#15803d', fontSize: 15, fontWeight: 700, padding: '8px 18px' }}>
-                      Side A Wins
-                    </div>
-                    <div style={{ color: '#667085', fontSize: 12, marginTop: 4 }}>
-                      Side A gets {Number(Math.abs(delta)).toLocaleString()} more value
-                    </div>
-                  </div>
-                )}
-                {winner === 'side_b' && (
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ background: '#dcfce7', borderRadius: 8, color: '#15803d', fontSize: 15, fontWeight: 700, padding: '8px 18px' }}>
-                      Side B Wins
-                    </div>
-                    <div style={{ color: '#667085', fontSize: 12, marginTop: 4 }}>
-                      Side B gets {Number(Math.abs(delta)).toLocaleString()} more value
-                    </div>
-                  </div>
-                )}
-                {loading && <span style={{ color: '#94a3b8', fontSize: 13 }}>Calculating...</span>}
-              </div>
-            </div>
+          <div style={{ display: 'flex', gap: 10, marginBottom: 15 }}>
+            <button
+              onClick={() => setActiveTab('pick')}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 6,
+                border: '1px solid #d1d5db',
+                background: activeTab === 'pick' ? '#4f46e5' : '#fff',
+                color: activeTab === 'pick' ? '#fff' : '#475467',
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontSize: 14,
+              }}
+            >
+              Pick Calculator
+            </button>
+            <button
+              onClick={() => setActiveTab('auction')}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 6,
+                border: '1px solid #d1d5db',
+                background: activeTab === 'auction' ? '#4f46e5' : '#fff',
+                color: activeTab === 'auction' ? '#fff' : '#475467',
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontSize: 14,
+              }}
+            >
+              Auction Value Calculator
+            </button>
           </div>
-        )}
 
-        {pickValues && (
-          <details style={{ marginTop: 24 }}>
-            <summary style={{ color: '#475467', cursor: 'pointer', fontSize: 14, fontWeight: 600, userSelect: 'none' }}>
-              Pick Value Reference Table
-            </summary>
-            <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', marginTop: 12 }}>
-              {Object.entries(pickValues).map(([year, rounds]) => (
-                <div key={year} style={{ background: '#ffffff', border: '1px solid #d9dee7', borderRadius: 8, overflow: 'hidden' }}>
-                  <div style={{ background: '#f8fafc', borderBottom: '1px solid #e4e7ec', fontWeight: 700, padding: '8px 12px' }}>{year}</div>
-                  {Object.entries(rounds).map(([round, value]) => (
-                    <div key={round} style={{ borderBottom: '1px solid #f8fafc', display: 'flex', justifyContent: 'space-between', padding: '6px 12px' }}>
-                      <span style={{ color: '#475467', fontSize: 13 }}>{round}</span>
-                      <span style={{ color: '#1d4ed8', fontSize: 13, fontWeight: 600 }}>{Number(value).toLocaleString()}</span>
+          {activeTab === 'pick' ? (
+            <>
+              <h1 style={{ margin: '0 0 6px' }}>Pick Value Calculator</h1>
+              <p style={{ color: '#667085', margin: 0 }}>
+                Compare dynasty trade sides with draft picks and players. Values are KTC-equivalent.
+              </p>
+            </>
+          ) : (
+            <h1 style={{ margin: '0 0 6px' }}>Auction Value Calculator</h1>
+          )}
+        </div>
+
+        {activeTab === 'pick' && (
+          <>
+            {error && <p style={{ color: '#b42318', marginBottom: 12 }}>{error}</p>}
+
+            <div style={{ display: 'grid', gap: 16, gridTemplateColumns: '1fr 1fr', marginBottom: 20 }}>
+              <TradePanel
+                label="Side A"
+                sideKey="side_a"
+                items={sideA}
+                onAddItem={addToSide(setSideA)}
+                onRemoveItem={removeFromSide(setSideA)}
+                pickValues={pickValues}
+                total={sideATotal}
+                winner={winner}
+              />
+              <TradePanel
+                label="Side B"
+                sideKey="side_b"
+                items={sideB}
+                onAddItem={addToSide(setSideB)}
+                onRemoveItem={removeFromSide(setSideB)}
+                pickValues={pickValues}
+                total={sideBTotal}
+                winner={winner}
+              />
+            </div>
+
+            {(sideA.length > 0 || sideB.length > 0) && (
+              <div style={{ background: '#ffffff', border: '1px solid #d9dee7', borderRadius: 10, padding: '16px 20px' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                    <div>
+                      <div style={{ color: '#667085', fontSize: 12, fontWeight: 600, marginBottom: 2, textTransform: 'uppercase' }}>Side A Total</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: '#1d4ed8' }}>{Number(sideATotal).toLocaleString()}</div>
+                    </div>
+                    <div style={{ alignSelf: 'center', color: '#94a3b8', fontSize: 20, fontWeight: 300 }}>vs</div>
+                    <div>
+                      <div style={{ color: '#667085', fontSize: 12, fontWeight: 600, marginBottom: 2, textTransform: 'uppercase' }}>Side B Total</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: '#1d4ed8' }}>{Number(sideBTotal).toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <div style={{ color: '#667085', fontSize: 12, fontWeight: 600, marginBottom: 2, textTransform: 'uppercase' }}>Delta</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: delta >= 0 ? '#15803d' : '#b42318' }}>
+                        {delta >= 0 ? '+' : ''}{Number(delta).toLocaleString()}
+                        <span style={{ fontSize: 13, fontWeight: 600, marginLeft: 4 }}>({deltaPct}%)</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    {winner === 'even' && (
+                      <span style={{ background: '#f1f5f9', borderRadius: 8, color: '#475467', fontSize: 15, fontWeight: 700, padding: '8px 18px' }}>
+                        Even Trade
+                      </span>
+                    )}
+                    {winner === 'side_a' && (
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ background: '#dcfce7', borderRadius: 8, color: '#15803d', fontSize: 15, fontWeight: 700, padding: '8px 18px' }}>
+                          Side A Wins
+                        </div>
+                        <div style={{ color: '#667085', fontSize: 12, marginTop: 4 }}>
+                          Side A gets {Number(Math.abs(delta)).toLocaleString()} more value
+                        </div>
+                      </div>
+                    )}
+                    {winner === 'side_b' && (
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ background: '#dcfce7', borderRadius: 8, color: '#15803d', fontSize: 15, fontWeight: 700, padding: '8px 18px' }}>
+                          Side B Wins
+                        </div>
+                        <div style={{ color: '#667085', fontSize: 12, marginTop: 4 }}>
+                          Side B gets {Number(Math.abs(delta)).toLocaleString()} more value
+                        </div>
+                      </div>
+                    )}
+                    {loading && <span style={{ color: '#94a3b8', fontSize: 13 }}>Calculating...</span>}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {pickValues && (
+              <details style={{ marginTop: 24 }}>
+                <summary style={{ color: '#475467', cursor: 'pointer', fontSize: 14, fontWeight: 600, userSelect: 'none' }}>
+                  Pick Value Reference Table
+                </summary>
+                <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', marginTop: 12 }}>
+                  {Object.entries(pickValues).map(([year, rounds]) => (
+                    <div key={year} style={{ background: '#ffffff', border: '1px solid #d9dee7', borderRadius: 8, overflow: 'hidden' }}>
+                      <div style={{ background: '#f8fafc', borderBottom: '1px solid #e4e7ec', fontWeight: 700, padding: '8px 12px' }}>{year}</div>
+                      {Object.entries(rounds).map(([round, value]) => (
+                        <div key={round} style={{ borderBottom: '1px solid #f8fafc', display: 'flex', justifyContent: 'space-between', padding: '6px 12px' }}>
+                          <span style={{ color: '#475467', fontSize: 13 }}>{round}</span>
+                          <span style={{ color: '#1d4ed8', fontSize: 13, fontWeight: 600 }}>{Number(value).toLocaleString()}</span>
+                        </div>
+                      ))}
                     </div>
                   ))}
                 </div>
-              ))}
-            </div>
-          </details>
+              </details>
+            )}
+          </>
         )}
+
+        {activeTab === 'auction' && <AuctionValueCalculator />}
       </section>
     </main>
   );
