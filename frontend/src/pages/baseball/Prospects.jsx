@@ -7,6 +7,36 @@ const API = import.meta.env.VITE_API_URL || '';
 const POSITIONS = ['All', 'SP', 'RP', 'C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'OF', 'DH'];
 const LEVELS = ['All', 'AAA', 'AA', 'A+', 'A', 'Rookie'];
 
+const calculateMlbEta = (age, level) => {
+  const currentYear = 2025; // Consistent with "2025 season" comment in header
+
+  const levelEtaOffset = {
+    'Rookie': 4,
+    'A': 3,
+    'A+': 2,
+    'AA': 1,
+    'AAA': 0,
+    'MLB': 0,
+  };
+
+  let baseEta = currentYear + (levelEtaOffset[level] || 5);
+
+  let ageAdjustment = 0;
+  if (age < 20) {
+    ageAdjustment = 1;
+  } else if (age >= 20 && age < 22) {
+    ageAdjustment = 0;
+  } else if (age >= 22 && age < 24) {
+    ageAdjustment = -1;
+  } else { // Older prospect (24+)
+    ageAdjustment = -2;
+  }
+
+  const estimatedEta = baseEta + ageAdjustment;
+  return Math.max(currentYear, estimatedEta);
+};
+
+
 export default function Prospects() {
   const [prospects, setProspects] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -24,7 +54,11 @@ export default function Prospects() {
         const res = await fetch(`${API}/api/baseball/prospects?limit=500`);
         if (!res.ok) throw new Error(`Failed to load prospects (${res.status})`);
         const data = await res.json();
-        setProspects(data.prospects || []);
+        const prospectsWithEta = (data.prospects || []).map(p => ({
+          ...p,
+          eta: calculateMlbEta(p.age, p.level)
+        }));
+        setProspects(prospectsWithEta);
       } catch (err) {
         setError(err.message);
       } finally {
@@ -116,7 +150,7 @@ export default function Prospects() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ background: 'var(--bg-secondary)', borderBottom: '2px solid var(--border-color)' }}>
-                  {['Name', 'Pos', 'Team', 'Level', 'Age'].map((h) => (
+                  {['Name', 'Pos', 'Team', 'Level', 'Age', 'ETA'].map((h) => (
                     <th key={h} style={{
                       padding: '10px 14px',
                       textAlign: 'left',
@@ -149,6 +183,7 @@ export default function Prospects() {
                     <td style={{ padding: '9px 14px', color: 'var(--text-secondary)' }}>{p.team || '—'}</td>
                     <td style={{ padding: '9px 14px' }}><LevelBadge level={p.level} /></td>
                     <td style={{ padding: '9px 14px', color: 'var(--text-secondary)' }}>{p.age || '—'}</td>
+                    <td style={{ padding: '9px 14px', fontWeight: 600 }}>{p.eta || '—'}</td>
                   </tr>
                 ))}
                 {filtered.length === 0 && (
