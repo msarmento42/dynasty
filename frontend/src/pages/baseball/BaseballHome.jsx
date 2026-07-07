@@ -117,7 +117,7 @@ export default function BaseballHome() {
         {/* Quick links */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
           <QuickLink to="/baseball/prospects" icon="📋" title="Prospect Tracker" desc="Browse all active minor leaguers by level" />
-          <QuickLink to="/baseball/roster" icon="⭐" title="My Roster" desc="Manage your baseball dynasty roster" />
+          <QuickLink to="/baseball/roster" icon="⭐" title="My Roster" desc="Manage your baseball dynasty roster" />          <QuickLink to="/baseball/compare" icon="📊" title="Player Comparison" desc="Compare multiple players side-by-side" />
         </div>
       </div>
     </main>
