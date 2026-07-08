@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import LoadingSkeleton from '../components/LoadingSkeleton.jsx';
 
 const POS_COLORS = {
   QB: { bg: '#e0f2fe', text: '#0369a1' },
@@ -124,7 +125,13 @@ export default function Movers() {
           </p>
         </div>
 
-        {loading && <p style={{ color: '#667085' }}>Loading movers...</p>}
+        {loading && (
+          <div style={{ display: 'grid', gap: 12 }}>
+            <LoadingSkeleton rows={2} metrics={1} />
+            <LoadingSkeleton rows={2} metrics={1} />
+            <LoadingSkeleton rows={2} metrics={1} />
+          </div>
+        )}
 
         {error && (
           <div
