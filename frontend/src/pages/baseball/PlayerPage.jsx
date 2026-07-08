@@ -92,7 +92,7 @@ export default function PlayerPage() {
 
   if (!player) return null;
 
-  const pitching = isPitcher(player.position);
+  const pitching = isPitcher(player.position);  const statcastMetrics = player.statcast?.metrics || dummyStatcastData;
   const statKeys = pitching ? PITCHING_KEYS : HITTING_KEYS;
   const statGroup = pitching ? 'pitching' : 'hitting';
 
@@ -173,7 +173,7 @@ export default function PlayerPage() {
         </div>
 
         {/* Statcast Percentiles */}
-        <StatcastPercentileChart metrics={dummyStatcastData} />
+        <StatcastPercentileChart metrics={statcastMetrics} />
 
         {/* Level progression */}
         {progressionLevels.length > 0 && (
