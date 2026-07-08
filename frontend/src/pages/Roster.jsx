@@ -623,226 +623,244 @@ export default function Roster() {
 
             <ValueTrendChart history={valueHistory} />
 
-            {rosterData.players && rosterData.players.length > 0 && (
-              <div style={{ background: '#ffffff', border: '1px solid #d9dee7', borderRadius: 8, overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr>
-                      <th
-                        onClick={() => handleSort('full_name')}
-                        style={{
-                          padding: '12px 16px',
-                          textAlign: 'left',
-                          borderBottom: '1px solid #eaecf0',
-                          cursor: 'pointer',
-                          fontWeight: 600,
-                          color: '#475467',
-                          fontSize: 12,
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.05em',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        Player Name{' '}
-                        {sortColumn === 'full_name' && (sortDirection === 'asc' ? '▲' : '▼')}
-                      </th>
-                      <th
-                        onClick={() => handleSort('position')}
-                        style={{
-                          padding: '12px 16px',
-                          textAlign: 'left',
-                          borderBottom: '1px solid #eaecf0',
-                          cursor: 'pointer',
-                          fontWeight: 600,
-                          color: '#475467',
-                          fontSize: 12,
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.05em',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        Position{' '}
-                        {sortColumn === 'position' && (sortDirection === 'asc' ? '▲' : '▼')}
-                      </th>
-                      <th
-                        onClick={() => handleSort('age')}
-                        style={{
-                          padding: '12px 16px',
-                          textAlign: 'left',
-                          borderBottom: '1px solid #eaecf0',
-                          cursor: 'pointer',
-                          fontWeight: 600,
-                          color: '#475467',
-                          fontSize: 12,
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.05em',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        Age{' '}
-                        {sortColumn === 'age' && (sortDirection === 'asc' ? '▲' : '▼')}
-                      </th>
-                      <th
-                        style={{
-                          padding: '12px 16px',
-                          textAlign: 'left',
-                          borderBottom: '1px solid #eaecf0',
-                          fontWeight: 600,
-                          color: '#475467',
-                          fontSize: 12,
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.05em',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        Trust
-                      </th>
-                      <th
-                        onClick={() => handleSort('adjusted_value')}
-                        style={{
-                          padding: '12px 16px',
-                          textAlign: 'right',
-                          borderBottom: '1px solid #eaecf0',
-                          cursor: 'pointer',
-                          fontWeight: 600,
-                          color: '#475467',
-                          fontSize: 12,
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.05em',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        Value{' '}
-                        {sortColumn === 'adjusted_value' && (sortDirection === 'asc' ? '▲' : '▼')}
-                      </th>
-                      <th
-                        style={{
-                          padding: '12px 16px',
-                          textAlign: 'left',
-                          borderBottom: '1px solid #eaecf0',
-                          fontWeight: 600,
-                          color: '#475467',
-                          fontSize: 12,
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.05em',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        SOS
-                      </th>
-                      {/* New column for Alert Threshold */}
-                      <th
-                        style={{
-                          padding: '12px 16px',
-                          textAlign: 'left',
-                          borderBottom: '1px solid #eaecf0',
-                          fontWeight: 600,
-                          color: '#475467',
-                          fontSize: 12,
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.05em',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        Alert Threshold (%)
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sortedPlayers.map((player) => {
-                      const effectiveThreshold = playerThresholds[player.sleeper_id] !== undefined
-                        ? playerThresholds[player.sleeper_id]
-                        : globalThreshold;
-                      const isAlerted = triggeredAlerts.some(alert => alert.player.sleeper_id === player.sleeper_id);
-                      const sos = player.schedule_sos || {};
-                      const sosColors = sosColor(sos.sos_score);
-
-                      return (
-                        <tr
-                          key={player.sleeper_id}
-                          id={`player-${player.sleeper_id}`} // Anchor for alerts panel
-                          style={{ background: isAlerted ? '#fffbeb' : 'inherit' }}
+            {rosterData.players && rosterData.players.length > 0 ? (
+              <>
+                <div style={{ background: '#ffffff', border: '1px solid #d9dee7', borderRadius: 8, overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr>
+                        <th
+                          onClick={() => handleSort('full_name')}
+                          style={{
+                            padding: '12px 16px',
+                            textAlign: 'left',
+                            borderBottom: '1px solid #eaecf0',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            color: '#475467',
+                            fontSize: 12,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                            whiteSpace: 'nowrap',
+                          }}
                         >
-                          <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#101828', fontSize: 14 }}>
-                            {player.full_name}
-                          </td>
-                          <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
-                            <PlayerChip position={player.position} team={player.team} />
-                          </td>
-                          <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
-                            {player.age}
-                          </td>
-                          <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
-                            <ConfidenceBadge confidence={player.data_confidence} />
-                          </td>
-                          <td style={{ padding: '12px 16px', textAlign: 'right', borderBottom: '1px solid #eaecf0', color: '#101828', fontSize: 14, fontWeight: 500 }}>
-                            {Number(player.adjusted_value || 0).toLocaleString()}
-                          </td>
-                          <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
-                            <span
-                              title={(sos.opponents || [])
-                                .map((matchup) => `W${matchup.week}: ${matchup.opponent || 'BYE'} (${matchup.matchup_score ?? '--'})`)
-                                .join(', ') || 'Schedule data unavailable'}
-                              style={{
-                                ...sosColors,
-                                borderRadius: 999,
-                                display: 'inline-flex',
-                                fontSize: 12,
-                                fontWeight: 800,
-                                padding: '4px 8px',
-                                whiteSpace: 'nowrap',
-                              }}
-                            >
-                              {sos.sos_score != null ? `${sos.sos_score} ${sos.sos_label}` : 'SOS N/A'}
-                            </span>
-                          </td>
-                          {/* Alert Threshold Input */}
-                          <td style={{ padding: '8px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                              <input
-                                type="number"
-                                min="0"
-                                step="1"
-                                value={effectiveThreshold}
-                                onChange={(e) => handlePlayerThresholdChange(player.sleeper_id, e)}
+                          Player Name{' '}
+                          {sortColumn === 'full_name' && (sortDirection === 'asc' ? '▲' : '▼')}
+                        </th>
+                        <th
+                          onClick={() => handleSort('position')}
+                          style={{
+                            padding: '12px 16px',
+                            textAlign: 'left',
+                            borderBottom: '1px solid #eaecf0',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            color: '#475467',
+                            fontSize: 12,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          Position{' '}
+                          {sortColumn === 'position' && (sortDirection === 'asc' ? '▲' : '▼')}
+                        </th>
+                        <th
+                          onClick={() => handleSort('age')}
+                          style={{
+                            padding: '12px 16px',
+                            textAlign: 'left',
+                            borderBottom: '1px solid #eaecf0',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            color: '#475467',
+                            fontSize: 12,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          Age{' '}
+                          {sortColumn === 'age' && (sortDirection === 'asc' ? '▲' : '▼')}
+                        </th>
+                        <th
+                          style={{
+                            padding: '12px 16px',
+                            textAlign: 'left',
+                            borderBottom: '1px solid #eaecf0',
+                            fontWeight: 600,
+                            color: '#475467',
+                            fontSize: 12,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          Trust
+                        </th>
+                        <th
+                          onClick={() => handleSort('adjusted_value')}
+                          style={{
+                            padding: '12px 16px',
+                            textAlign: 'right',
+                            borderBottom: '1px solid #eaecf0',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            color: '#475467',
+                            fontSize: 12,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          Value{' '}
+                          {sortColumn === 'adjusted_value' && (sortDirection === 'asc' ? '▲' : '▼')}
+                        </th>
+                        <th
+                          style={{
+                            padding: '12px 16px',
+                            textAlign: 'left',
+                            borderBottom: '1px solid #eaecf0',
+                            fontWeight: 600,
+                            color: '#475467',
+                            fontSize: 12,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          SOS
+                        </th>
+                        {/* New column for Alert Threshold */}
+                        <th
+                          style={{
+                            padding: '12px 16px',
+                            textAlign: 'left',
+                            borderBottom: '1px solid #eaecf0',
+                            fontWeight: 600,
+                            color: '#475467',
+                            fontSize: 12,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          Alert Threshold (%)
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedPlayers.map((player) => {
+                        const effectiveThreshold = playerThresholds[player.sleeper_id] !== undefined
+                          ? playerThresholds[player.sleeper_id]
+                          : globalThreshold;
+                        const isAlerted = triggeredAlerts.some(alert => alert.player.sleeper_id === player.sleeper_id);
+                        const sos = player.schedule_sos || {};
+                        const sosColors = sosColor(sos.sos_score);
+
+                        return (
+                          <tr
+                            key={player.sleeper_id}
+                            id={`player-${player.sleeper_id}`} // Anchor for alerts panel
+                            style={{ background: isAlerted ? '#fffbeb' : 'inherit' }}
+                          >
+                            <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#101828', fontSize: 14 }}>
+                              {player.full_name}
+                            </td>
+                            <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
+                              <PlayerChip position={player.position} team={player.team} />
+                            </td>
+                            <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
+                              {player.age}
+                            </td>
+                            <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
+                              <ConfidenceBadge confidence={player.data_confidence} />
+                            </td>
+                            <td style={{ padding: '12px 16px', textAlign: 'right', borderBottom: '1px solid #eaecf0', color: '#101828', fontSize: 14, fontWeight: 500 }}>
+                              {Number(player.adjusted_value || 0).toLocaleString()}
+                            </td>
+                            <td style={{ padding: '12px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
+                              <span
+                                title={(sos.opponents || [])
+                                  .map((matchup) => `W${matchup.week}: ${matchup.opponent || 'BYE'} (${matchup.matchup_score ?? '--'})`)
+                                  .join(', ') || 'Schedule data unavailable'}
                                 style={{
+                                  ...sosColors,
+                                  borderRadius: 999,
+                                  display: 'inline-flex',
+                                  fontSize: 12,
+                                  fontWeight: 800,
                                   padding: '4px 8px',
-                                  borderRadius: 6,
-                                  border: '1px solid #d0d5dd',
-                                  width: 60,
-                                  fontSize: 13,
+                                  whiteSpace: 'nowrap',
                                 }}
-                              />
-                              {playerThresholds[player.sleeper_id] !== undefined && (
-                                <button
-                                  onClick={() => clearPlayerThreshold(player.sleeper_id)}
-                                  title="Clear custom threshold and use global default"
+                              >
+                                {sos.sos_score != null ? `${sos.sos_score} ${sos.sos_label}` : 'SOS N/A'}
+                              </span>
+                            </td>
+                            {/* Alert Threshold Input */}
+                            <td style={{ padding: '8px 16px', borderBottom: '1px solid #eaecf0', color: '#475467', fontSize: 14 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  value={effectiveThreshold}
+                                  onChange={(e) => handlePlayerThresholdChange(player.sleeper_id, e)}
                                   style={{
-                                    background: 'none',
-                                    border: 'none',
-                                    cursor: 'pointer',
-                                    color: '#98a2b3',
-                                    fontSize: 16,
-                                    padding: 0,
-                                    lineHeight: 1,
+                                    padding: '4px 8px',
+                                    borderRadius: 6,
+                                    border: '1px solid #d0d5dd',
+                                    width: 60,
+                                    fontSize: 13,
                                   }}
-                                >
-                                  &times;
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                                />
+                                {playerThresholds[player.sleeper_id] !== undefined && (
+                                  <button
+                                    onClick={() => clearPlayerThreshold(player.sleeper_id)}
+                                    title="Clear custom threshold and use global default"
+                                    style={{
+                                      background: 'none',
+                                      border: 'none',
+                                      cursor: 'pointer',
+                                      color: '#98a2b3',
+                                      fontSize: 16,
+                                      padding: 0,
+                                      lineHeight: 1,
+                                    }}
+                                  >
+                                    &times;
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <footer style={{ color: '#475467', fontWeight: 700 }}>
+                  Total roster value: {Number(rosterData.total_adjusted_value || 0).toLocaleString()}
+                </footer>
+              </>
+            ) : (
+              <div style={{
+                textAlign: 'center',
+                padding: '48px 24px',
+                background: '#ffffff',
+                border: '1px solid #d9dee7',
+                borderRadius: 8,
+                marginTop: 24,
+              }}>
+                <h3 style={{ margin: '0 0 12px 0', color: '#344054', fontSize: 18 }}>
+                  No roster data available.
+                </h3>
+                <p style={{ margin: 0, color: '#667085', fontSize: 16 }}>
+                  Sync your league to get started or select a different league.
+                </p>
               </div>
             )}
-
-            <footer style={{ color: '#475467', fontWeight: 700 }}>
-              Total roster value: {Number(rosterData.total_adjusted_value || 0).toLocaleString()}
-            </footer>
           </div>
         )}
       </section>
