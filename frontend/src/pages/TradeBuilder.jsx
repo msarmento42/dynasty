@@ -3,6 +3,7 @@ import LeagueSelector from '../components/LeagueSelector.jsx';
 import PositionalImpactDisplay from '../components/PositionalImpactDisplay.jsx';
 import VerdictChip from '../components/VerdictChip.jsx';
 import ConfidenceBadge from '../components/ConfidenceBadge.jsx';import LoadingSkeleton from '../components/LoadingSkeleton.jsx';
+import TradePartnerFinder from '../components/TradePartnerFinder.jsx';
 
 function playerLabel(player) {
   return `${player.name} (${player.position || 'FA'}${player.team ? `, ${player.team}` : ''})`;
@@ -409,6 +410,7 @@ export default function TradeBuilder() {
             >
               Evaluate Trade
             </button>
+            <TradePartnerFinder />
           </section>
 
           <aside style={{ background: '#ffffff', border: '1px solid #d9dee7', borderRadius: 8, padding: 18 }}>
