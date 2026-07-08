@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
+import LoadingSkeleton from '../components/LoadingSkeleton.jsx';
 
 const POS_COLORS = {
   QB: { bg: '#e0f2fe', text: '#0369a1' },
@@ -222,7 +223,13 @@ export default function PowerRankings() {
           <LeagueSelector onSelect={load} />
         </div>
 
-        {loading && <p style={{ color: 'var(--text-secondary, #667085)' }}>Loading rankings...</p>}
+        {loading && (
+          <div style={{ display: 'grid', gap: 12 }}>
+            <LoadingSkeleton rows={2} metrics={1} avatar />
+            <LoadingSkeleton rows={2} metrics={1} avatar />
+            <LoadingSkeleton rows={2} metrics={1} avatar />
+          </div>
+        )}
         {error && (
           <div
             style={{
