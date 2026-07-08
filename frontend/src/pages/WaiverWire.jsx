@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import LeagueSelector from '../components/LeagueSelector.jsx';
+import LeagueSelector from '../components/LeagueSelector.jsx';import LoadingSkeleton from '../components/LoadingSkeleton.jsx';
 
 const PRESETS_KEY = 'dynastyViewPresets';
 
@@ -316,7 +316,14 @@ export default function WaiverWire() {
         <LeagueSelector onSelect={handleSelect} />
 
         {error && <p style={{ color: '#b42318' }}>{error}</p>}
-        {loading && <p>Loading...</p>}
+        {loading && !data && (
+          <div style={{ display: 'grid', gap: 12 }}>
+            <LoadingSkeleton rows={2} metrics={1} />
+            <LoadingSkeleton rows={2} metrics={1} />
+            <LoadingSkeleton rows={2} metrics={1} />
+            <LoadingSkeleton rows={2} metrics={1} />
+          </div>
+        )}
 
         {data && (
           <>
