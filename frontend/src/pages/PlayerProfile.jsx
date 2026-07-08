@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import AgeCurveChart from '../components/AgeCurveChart';
 import ValueTrendChart from '../components/ValueTrendChart';
+import LoadingSkeleton from '../components/LoadingSkeleton';
 
 const POSITION_COLORS = {
   QB: '#dc2626',
@@ -54,146 +55,7 @@ function buyerScoreColor(score) {
   return { background: '#f2f4f7', color: '#475467' };
 }
 
-// --- Skeleton Components Start ---
-const Skeleton = ({ width, height, borderRadius = 4, style = {} }) => (
-  <div
-    style={{
-      background: '#e2e8f0', // Tailwind's gray-200
-      borderRadius,
-      width,
-      height,
-      ...style,
-    }}
-  />
-);
 
-const PlayerHeaderSkeleton = () => (
-  <header
-    style={{
-      alignItems: 'center',
-      background: '#ffffff',
-      border: '1px solid #d9dee7',
-      borderRadius: 10,
-      display: 'flex',
-      gap: 20,
-      padding: 24,
-    }}
-  >
-    <Skeleton width={72} height={72} borderRadius={12} />
-    <div style={{ flex: 1 }}>
-      <Skeleton width="70%" height={28} style={{ marginBottom: 8 }} />
-      <Skeleton width="90%" height={20} />
-    </div>
-  </header>
-);
-
-const KeyMetricsSkeleton = () => (
-  <div
-    style={{
-      display: 'grid',
-      gap: 14,
-      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-    }}
-  >
-    {Array.from({ length: 7 }).map((_, i) => (
-      <article
-        key={i}
-        style={{
-          background: '#ffffff',
-          border: '1px solid #d9dee7',
-          borderRadius: 8,
-          padding: 16,
-          textAlign: 'center',
-        }}
-      >
-        <Skeleton width="80%" height={16} style={{ margin: '0 auto 6px' }} />
-        <Skeleton width="60%" height={24} style={{ margin: '0 auto' }} />
-      </article>
-    ))}
-  </div>
-);
-
-const RecentStatsSkeleton = () => (
-  <section
-    style={{
-      background: '#ffffff',
-      border: '1px solid #d9dee7',
-      borderRadius: 10,
-      padding: 20,
-    }}
-  >
-    <Skeleton width="40%" height={24} style={{ marginBottom: 14 }} /> {/* Title */}
-    <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-      <thead>
-        <tr style={{ background: '#f8fafc', borderBottom: '1px solid #d9dee7' }}>
-          <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 700 }}>Date</th>
-          <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 700 }}>SF Value</th>
-          <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 700 }}>Depth</th>
-          <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 700 }}>Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {Array.from({ length: 5 }).map((_, i) => (
-          <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
-            <td style={{ padding: '10px 12px' }}><Skeleton width="80%" height={18} /></td>
-            <td style={{ padding: '10px 12px' }}><Skeleton width="70%" height={18} /></td>
-            <td style={{ padding: '10px 12px' }}><Skeleton width="50%" height={18} /></td>
-            <td style={{ padding: '10px 12px' }}><Skeleton width="60%" height={18} /></td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  </section>
-);
-
-const ComparablePlayersSkeleton = () => (
-  <section
-    style={{
-      background: '#ffffff',
-      border: '1px solid #d9dee7',
-      borderRadius: 10,
-      padding: 20,
-    }}
-  >
-    <Skeleton width="50%" height={24} style={{ marginBottom: 14 }} /> {/* Title */}
-    <div
-      style={{
-        display: 'grid',
-        gap: 12,
-        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-      }}
-    >
-      {Array.from({ length: 4 }).map((_, i) => (
-        <article
-          key={i}
-          style={{
-            border: '1px solid #d9dee7',
-            borderRadius: 8,
-            padding: 14,
-            background: '#f8fafc',
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            <div>
-              <Skeleton width={100} height={20} style={{ marginBottom: 4 }} />
-              <Skeleton width={70} height={16} />
-            </div>
-            <Skeleton width={60} height={24} borderRadius={999} />
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10 }}>
-            <Skeleton width={40} height={16} />
-            <Skeleton width={60} height={16} />
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <Skeleton width={40} height={16} />
-            <Skeleton width={60} height={16} />
-          </div>
-        </article>
-      ))}
-    </div>
-  </section>
-);
-// --- Skeleton Components End ---
 
 export default function PlayerProfile() {
   const { playerId } = useParams();
@@ -315,10 +177,57 @@ export default function PlayerProfile() {
 
         {loading && (
           <div style={{ display: 'grid', gap: 20 }}>
-            <PlayerHeaderSkeleton />
-            <KeyMetricsSkeleton />
-            <RecentStatsSkeleton />
-            <ComparablePlayersSkeleton />
+            {/* Player Header Skeleton */}
+            <LoadingSkeleton avatar={true} badge={false} rows={2} style={{ padding: 24 }} />
+
+            {/* Key Metrics Skeleton */}
+            <div
+              style={{
+                display: 'grid',
+                gap: 14,
+                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+              }}
+            >
+              {Array.from({ length: 7 }).map((_, i) => (
+                <LoadingSkeleton key={i} avatar={false} badge={false} rows={2} style={{ padding: 16, textAlign: 'center' }} />
+              ))}
+            </div>
+
+            {/* Recent Stats Skeleton */}
+            <section
+              style={{
+                background: '#ffffff',
+                border: '1px solid #d9dee7',
+                borderRadius: 10,
+                padding: 20,
+              }}
+            >
+              <LoadingSkeleton rows={1} badge={false} style={{ width: '40%', marginBottom: 14 }} /> {/* Title */}
+              <LoadingSkeleton rows={5} badge={false} avatar={false} style={{ height: 'auto' }} /> {/* Table content as a block */}
+            </section>
+
+            {/* Comparable Players Skeleton */}
+            <section
+              style={{
+                background: '#ffffff',
+                border: '1px solid #d9dee7',
+                borderRadius: 10,
+                padding: 20,
+              }}
+            >
+              <LoadingSkeleton rows={1} badge={false} style={{ width: '50%', marginBottom: 14 }} /> {/* Title */}
+              <div
+                style={{
+                  display: 'grid',
+                  gap: 12,
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                }}
+              >
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <LoadingSkeleton key={i} avatar={false} badge={true} rows={1} metrics={2} style={{ padding: 14, background: '#f8fafc' }} />
+                ))}
+              </div>
+            </section>
           </div>
         )}
 
