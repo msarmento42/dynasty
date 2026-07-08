@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
 import PositionalImpactDisplay from '../components/PositionalImpactDisplay.jsx';
 import VerdictChip from '../components/VerdictChip.jsx';
-import ConfidenceBadge from '../components/ConfidenceBadge.jsx';
+import ConfidenceBadge from '../components/ConfidenceBadge.jsx';import LoadingSkeleton from '../components/LoadingSkeleton.jsx';
 
 function playerLabel(player) {
   return `${player.name} (${player.position || 'FA'}${player.team ? `, ${player.team}` : ''})`;
@@ -302,48 +302,56 @@ export default function TradeBuilder() {
 
         <div className="trade-builder-grid">
           <section style={{ display: 'grid', gap: 16 }}>
-            <div style={{ background: '#ffffff', border: '1px solid #d9dee7', borderRadius: 8, padding: 16 }}>
-              <h2 style={{ marginTop: 0 }}>My players</h2>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {(myRoster?.players || []).map((player) => (
-                  <button
-                    key={player.sleeper_id}
-                    onClick={() => addPlayer(player, setSideA)}
-                    style={{ border: '1px solid #cbd5e1', borderRadius: 999, cursor: 'pointer', padding: '7px 10px' }}
-                  >
-                    {playerLabel(player)}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div style={{ background: '#ffffff', border: '1px solid #d9dee7', borderRadius: 8, padding: 16 }}>
-              <h2 style={{ marginTop: 0 }}>Their players</h2>
-              <select
-                value={opponentRosterId}
-                onChange={(event) => setOpponentRosterId(event.target.value)}
-                style={{ border: '1px solid #ccd2dc', borderRadius: 6, marginBottom: 12, padding: '8px 10px' }}
-              >
-                {allRosters
-                  .filter((roster) => !roster.is_mine)
-                  .map((roster) => (
-                    <option key={roster.roster_id} value={roster.roster_id}>
-                      {roster.owner || `Roster ${roster.roster_id}`}
-                    </option>
+            {loading ? (
+              <LoadingSkeleton rows={5} avatar={false} badge={false} />
+            ) : (
+              <div style={{ background: '#ffffff', border: '1px solid #d9dee7', borderRadius: 8, padding: 16 }}>
+                <h2 style={{ marginTop: 0 }}>My players</h2>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {(myRoster?.players || []).map((player) => (
+                    <button
+                      key={player.sleeper_id}
+                      onClick={() => addPlayer(player, setSideA)}
+                      style={{ border: '1px solid #cbd5e1', borderRadius: 999, cursor: 'pointer', padding: '7px 10px' }}
+                    >
+                      {playerLabel(player)}
+                    </button>
                   ))}
-              </select>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {(opponentRoster?.players || []).map((player) => (
-                  <button
-                    key={player.sleeper_id}
-                    onClick={() => addPlayer(player, setSideB)}
-                    style={{ border: '1px solid #cbd5e1', borderRadius: 999, cursor: 'pointer', padding: '7px 10px' }}
-                  >
-                    {playerLabel(player)}
-                  </button>
-                ))}
+                </div>
               </div>
-            </div>
+            )}
+
+            {loading ? (
+              <LoadingSkeleton rows={5} avatar={false} badge={false} />
+            ) : (
+              <div style={{ background: '#ffffff', border: '1px solid #d9dee7', borderRadius: 8, padding: 16 }}>
+                <h2 style={{ marginTop: 0 }}>Their players</h2>
+                <select
+                  value={opponentRosterId}
+                  onChange={(event) => setOpponentRosterId(event.target.value)}
+                  style={{ border: '1px solid #ccd2dc', borderRadius: 6, marginBottom: 12, padding: '8px 10px' }}
+                >
+                  {allRosters
+                    .filter((roster) => !roster.is_mine)
+                    .map((roster) => (
+                      <option key={roster.roster_id} value={roster.roster_id}>
+                        {roster.owner || `Roster ${roster.roster_id}`}
+                      </option>
+                    ))}
+                </select>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {(opponentRoster?.players || []).map((player) => (
+                    <button
+                      key={player.sleeper_id}
+                      onClick={() => addPlayer(player, setSideB)}
+                      style={{ border: '1px solid #cbd5e1', borderRadius: 999, cursor: 'pointer', padding: '7px 10px' }}
+                    >
+                      {playerLabel(player)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <SelectedList
               title="You send"
@@ -406,11 +414,13 @@ export default function TradeBuilder() {
           <aside style={{ background: '#ffffff', border: '1px solid #d9dee7', borderRadius: 8, padding: 18 }}>
             <h2 style={{ marginTop: 0 }}>Result</h2>
             {loading ? (
-              <div style={{ display: 'grid', gap: 8 }}>
-                {[...Array(4)].map((_, i) => (
-                  <div key={i} className="animate-pulse bg-gray-200 rounded-lg h-24 w-full mb-2" />
-                ))}
-              </div>
+              <LoadingSkeleton
+                rows={4}
+                metrics={4}
+                avatar={false}
+                badge={true}
+                style={{ background: 'none', border: 'none', padding: '0' }}
+              />
             ) : !result ? (
               <p style={{ color: '#667085' }}>Select players from each side to evaluate a trade.</p>
             ) : (
