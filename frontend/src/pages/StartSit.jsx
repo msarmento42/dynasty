@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import LeagueSelector from '../components/LeagueSelector.jsx';
+import LoadingSkeleton from '../components/LoadingSkeleton.jsx';
 
 const POS_COLORS = {
   QB: { bg: '#fef3c7', text: '#92400e' },
@@ -109,7 +110,13 @@ export default function StartSit() {
         <LeagueSelector onSelect={handleSelect} />
 
         {error && <p style={{ color: '#b42318' }}>{error}</p>}
-        {loading && <p>Loading...</p>}
+        {loading && !data && (
+          <div style={{ display: 'grid', gap: 12 }}>
+            <LoadingSkeleton rows={3} metrics={2} />
+            <LoadingSkeleton rows={3} metrics={2} />
+            <LoadingSkeleton rows={3} metrics={2} />
+          </div>
+        )}
 
         {data && (
           <>
