@@ -18,7 +18,7 @@ import BaseballHome from './pages/baseball/BaseballHome.jsx';
 import Prospects from './pages/baseball/Prospects.jsx';
 import PlayerPage from './pages/baseball/PlayerPage.jsx';
 import BaseballRoster from './pages/baseball/Roster.jsx';
-import BaseballDraft from './pages/baseball/BaseballDraft.jsx';
+import BaseballDraft from './pages/baseball/BaseballDraft.jsx';import BaseballPlayerComparison from './pages/baseball/BaseballPlayerComparison.jsx';
 import ValueHistory from './pages/ValueHistory.jsx';
 import Rookies from './pages/Rookies.jsx';
 import MockDraft from './pages/MockDraft.jsx';
@@ -884,7 +884,7 @@ export default function App() {
         <Link to="/simulation-lab">Simulation Lab</Link>
         <span style={{ color: 'var(--border-color)', margin: '0 4px' }}>|</span>
         <Link to="/baseball">⚾ Baseball</Link>
-        <Link to="/baseball/draft">⚾ Draft Board</Link>
+        <Link to="/baseball/draft">⚾ Draft Board</Link>        <Link to="/baseball/compare">⚾ Compare Players</Link>
         <GlobalSearch />
         <button
           className="dark-mode-toggle"
@@ -934,7 +934,7 @@ export default function App() {
         <Route path="/baseball/prospects" element={<Prospects />} />
         <Route path="/baseball/players/:mlbId" element={<PlayerPage />} />
         <Route path="/baseball/roster" element={<BaseballRoster />} />
-        <Route path="/baseball/draft" element={<BaseballDraft />} />
+        <Route path="/baseball/draft" element={<BaseballDraft />} />        <Route path="/baseball/compare" element={<BaseballPlayerComparison />} />
       </Routes>
     </BrowserRouter>
   );
